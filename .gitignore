@@ -1,0 +1,81 @@
+# Build outputs
+bin/
+obj/
+out/
+build/
+
+# User-specific files
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Log files
+*.log
+logs/
+*.txt
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Package files
+*.nupkg
+*.snupkg
+
+# Environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Docker
+.dockerignore
+
+# Node modules (if any)
+node_modules/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Data directories (may contain sensitive data)
+data/
+rag-data/collections/
+
+# Test outputs
+TestResults/
+coverage/
+
+# Backup files (we'll commit these as they contain important history)
+# backups/ - keeping these for now as they contain development history
+
+# Server outputs
+server.log
+test-server.log
+
+# Specific exclusions for this project
+src/Mcp.CodeReview/logs/
+src/Mcp.CodeReview/bin/
+src/Mcp.CodeReview/obj/

@@ -1,0 +1,99 @@
+# Multi-stage production Dockerfile with security hardening
+FROM mcr.microsoft.com/dotnet/sdk:8.0-alpine AS build
+WORKDIR /source
+
+# Install security updates and required packages
+RUN apk update && apk upgrade && \
+    apk add --no-cache git curl ca-certificates && \
+    rm -rf /var/cache/apk/*
+
+# Copy project files and restore dependencies
+COPY mcp-code-review.sln .
+COPY src/Mcp.CodeReview/Mcp.CodeReview.csproj src/Mcp.CodeReview/
+RUN dotnet restore --no-cache
+
+# Copy source code and build
+COPY src/ src/
+RUN dotnet publish src/Mcp.CodeReview/Mcp.CodeReview.csproj \
+    -c Release \
+    -o /app \
+    --no-restore \
+    --self-contained false \
+    /p:PublishTrimmed=false \
+    /p:PublishSingleFile=false
+
+# Runtime stage with hardened Alpine Linux
+FROM mcr.microsoft.com/dotnet/aspnet:8.0-alpine AS runtime
+
+# Install runtime dependencies and security updates
+RUN apk update && apk upgrade && \
+    apk add --no-cache \
+        git \
+        curl \
+        ca-certificates \
+        tzdata \
+        dumb-init \
+        su-exec && \
+    rm -rf /var/cache/apk/* && \
+    # Update CA certificates
+    update-ca-certificates
+
+# Create non-root user for security
+RUN addgroup -g 1000 appuser && \
+    adduser -u 1000 -G appuser -D -s /bin/sh appuser
+
+# Create secure directory structure
+RUN mkdir -p /app /data /var/log/mcp /tmp/app && \
+    chown -R appuser:appuser /app /data /var/log/mcp /tmp/app && \
+    chmod 750 /app /data /var/log/mcp && \
+    chmod 1777 /tmp/app
+
+# Copy application files
+WORKDIR /app
+COPY --from=build --chown=appuser:appuser /app .
+
+# Copy health check script
+COPY --chown=appuser:appuser scripts/health-check.sh /usr/local/bin/health-check
+RUN chmod +x /usr/local/bin/health-check
+
+# Security hardening
+RUN chmod -R 444 /app/*.dll && \
+    chmod -R 444 /app/*.json && \
+    chmod 555 /app/Mcp.CodeReview && \
+    # Remove unnecessary packages
+    apk del --purge && \
+    # Clear package cache
+    rm -rf /var/cache/apk/* && \
+    # Remove temporary files
+    rm -rf /tmp/* /var/tmp/*
+
+# Configure environment
+ENV ASPNETCORE_ENVIRONMENT=Production \
+    ASPNETCORE_URLS=http://+:5000 \
+    DOTNET_RUNNING_IN_CONTAINER=true \
+    DOTNET_USE_POLLING_FILE_WATCHER=true \
+    DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false \
+    PATH="/app:${PATH}" \
+    USER=appuser \
+    TZ=UTC
+
+# Security labels for compliance
+LABEL security.non-root=true \
+      security.no-new-privileges=true \
+      maintainer="MCP Code Review Team" \
+      version="1.0.0" \
+      description="Production MCP Code Review Server"
+
+# Expose ports
+EXPOSE 5000 5001
+
+# Health check with proper timeout and retry
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD /usr/local/bin/health-check || exit 1
+
+# Use non-root user
+USER appuser
+
+# Use dumb-init for proper signal handling
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["dotnet", "Mcp.CodeReview.dll", "--http", "--port", "5000", "--metrics-port", "5001"]

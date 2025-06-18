@@ -1,0 +1,118 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "MCP Code Review Metrics",
+    "tags": ["mcp", "code-review"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Total Reviews",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "reviews_total",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null}
+              ]
+            }
+          }
+        },
+        "gridPos": {"h": 8, "w": 8, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "Review Duration",
+        "type": "histogram",
+        "targets": [
+          {
+            "expr": "review_duration_seconds",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "buckets": {
+                "mode": "auto"
+              }
+            }
+          }
+        },
+        "gridPos": {"h": 8, "w": 16, "x": 8, "y": 0}
+      },
+      {
+        "id": 3,
+        "title": "Error Count",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "sum(errors_total)",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 1},
+                {"color": "red", "value": 10}
+              ]
+            }
+          }
+        },
+        "gridPos": {"h": 8, "w": 8, "x": 0, "y": 8}
+      },
+      {
+        "id": 4,
+        "title": "Files Reviewed Over Time",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(files_reviewed_total[5m])",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 16, "x": 8, "y": 8}
+      },
+      {
+        "id": 5,
+        "title": "Error Rate by Type",
+        "type": "piechart",
+        "targets": [
+          {
+            "expr": "errors_total",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "legendDisplayMode": "table",
+              "legendValues": ["value", "percent"]
+            }
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
+      }
+    ],
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "refresh": "5s"
+  }
+}

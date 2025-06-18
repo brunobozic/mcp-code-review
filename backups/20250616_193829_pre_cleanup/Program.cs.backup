@@ -1,0 +1,152 @@
+using Mcp.CodeReview.AI;
+using Mcp.CodeReview.Abstractions;
+using Mcp.CodeReview.HealthChecks;
+using Mcp.CodeReview.Infrastructure;
+using Mcp.CodeReview.Metrics;
+using Mcp.CodeReview.Services;
+using Mcp.CodeReview.GitLab;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using ModelContextProtocol.Server;
+using Serilog;
+using System.CommandLine;
+
+var rootCommand = new RootCommand("MCP Code Review Server");
+
+var httpOption = new Option<bool>("--http", "Enable HTTP server");
+var portOption = new Option<int>("--port", () => 5000, "HTTP port");
+var metricsPortOption = new Option<int>("--metrics-port", () => 5001, "Metrics port");
+
+rootCommand.AddOption(httpOption);
+rootCommand.AddOption(portOption);
+rootCommand.AddOption(metricsPortOption);
+
+rootCommand.SetHandler(async (bool enableHttp, int port, int metricsPort) =>
+{
+    try
+    {
+        var builder = Host.CreateApplicationBuilder();
+        
+        // Configure enhanced logging with Serilog
+        builder.Logging.ClearProviders();
+        builder.Logging.AddConsole(options =>
+        {
+            options.LogToStandardErrorThreshold = LogLevel.Trace;
+        });
+        
+        Log.Logger = new LoggerConfiguration()
+            .MinimumLevel.Information()
+            .WriteTo.Console()
+            .WriteTo.File("logs/mcp-code-review-.txt", rollingInterval: RollingInterval.Day)
+            .CreateLogger();
+            
+        builder.Logging.AddSerilog();
+
+        // Add application services
+        builder.Services.AddHttpClient();
+        builder.Services.AddSingleton<GitHubService>();
+        builder.Services.AddSingleton<GitLabService>();
+        builder.Services.AddHttpClient<SonarQubeService>();
+        builder.Services.AddSingleton<SonarQubeService>();
+        builder.Services.AddSingleton<MetricsRegistry>();
+
+        // Add consolidated AI services with interfaces
+        builder.Services.AddSingleton<IClaudeService, RefactoredClaudeService>();
+        builder.Services.AddSingleton<IAgentOrchestrator, AgentOrchestrator>();
+        builder.Services.AddSingleton<IAIReviewService, ConsolidatedAIReviewSystem>();
+        
+        // Add specialized AI agents
+        builder.Services.AddScoped<ArchitectureStandardsAgent>();
+        
+        // Keep original ClaudeService for compatibility with existing tools
+        builder.Services.AddSingleton<ClaudeService>();
+
+        // Add GitLab integration services
+        builder.Services.AddHttpClient<GitLabIntegrationService>(client =>
+        {
+            var gitLabUrl = builder.Configuration["GITLAB_HOST"] ?? "http://localhost:8080";
+            client.BaseAddress = new Uri(gitLabUrl);
+            client.Timeout = TimeSpan.FromMinutes(5);
+        });
+        builder.Services.AddSingleton<GitLabIntegrationService>();
+
+        // Add health checks
+        builder.Services.AddHealthChecks()
+            .AddCheck<ExternalApiHealthCheck>("external_apis");
+            // .AddCheck<ComprehensiveHealthCheck>("comprehensive_health");
+
+        if (enableHttp)
+        {
+            // Add HTTP server capabilities with controllers
+            builder.Services.AddControllers();
+            builder.Services.AddEndpointsApiExplorer();
+            builder.Services.AddSwaggerGen();
+            
+            builder.Services
+                .AddMcpServer()
+                .WithToolsFromAssembly();
+                
+            // Add Prometheus metrics
+            builder.Services.AddSingleton<MetricsRegistry>();
+        }
+        else
+        {
+            // Add STDIO server capabilities (standard MCP mode)
+            builder.Services
+                .AddMcpServer()
+                .WithStdioServerTransport()
+                .WithToolsFromAssembly();
+        }
+
+        var app = builder.Build();
+
+        Log.Information("Starting MCP Code Review Server in {Mode} mode", 
+            enableHttp ? "HTTP" : "STDIO");
+        
+        if (enableHttp)
+        {
+            // Configure HTTP pipeline
+            if (app.Environment.IsDevelopment())
+            {
+                app.UseSwagger();
+                app.UseSwaggerUI();
+            }
+
+            app.UseRouting();
+            app.MapControllers();
+            app.MapHealthChecks("/health");
+            
+            // Add a simple root endpoint
+            app.MapGet("/", () => new
+            {
+                service = "MCP Code Review System",
+                version = "1.0.0",
+                mode = "HTTP",
+                endpoints = new
+                {
+                    webhook = "/api/gitlabwebhook",
+                    health = "/health",
+                    swagger = "/swagger"
+                },
+                timestamp = DateTimeOffset.UtcNow
+            });
+            
+            Log.Information("HTTP server will run on port {Port} with metrics on port {MetricsPort}", 
+                port, metricsPort);
+        }
+
+        await app.RunAsync();
+    }
+    catch (Exception ex)
+    {
+        Log.Fatal(ex, "Application startup failed");
+        throw;
+    }
+    finally
+    {
+        Log.CloseAndFlush();
+    }
+}, httpOption, portOption, metricsPortOption);
+
+await rootCommand.InvokeAsync(args);

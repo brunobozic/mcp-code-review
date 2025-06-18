@@ -1,0 +1,24 @@
+FROM mcr.microsoft.com/dotnet/sdk:8.0-alpine AS build
+
+# Install additional tools for testing
+RUN apk add --no-cache \
+    git \
+    curl \
+    jq \
+    python3 \
+    py3-pip \
+    bash
+
+# Install GitLab CLI and other tools
+RUN pip3 install python-gitlab requests
+
+# Set working directory
+WORKDIR /app
+
+# Copy test scripts
+COPY . .
+
+# Make scripts executable
+RUN chmod +x *.sh
+
+ENTRYPOINT ["/bin/bash"]

@@ -1,0 +1,266 @@
+using Polly;
+using Polly.CircuitBreaker;
+using Polly.Extensions.Http;
+using Polly.Timeout;
+
+namespace Mcp.CodeReview.Infrastructure;
+
+public static class CircuitBreakerExtensions
+{
+    public static IServiceCollection AddCircuitBreakers(this IServiceCollection services, IConfiguration configuration)
+    {
+        // Configure HTTP clients with circuit breakers
+        services.AddHttpClient("Claude", client =>
+        {
+            client.BaseAddress = new Uri("https://api.anthropic.com/");
+            client.Timeout = TimeSpan.FromSeconds(30);
+            client.DefaultRequestHeaders.Add("User-Agent", "MCP-CodeReview/1.0");
+        })
+        .AddPolicyHandler(GetClaudeRetryPolicy())
+        .AddPolicyHandler(GetClaudeCircuitBreakerPolicy())
+        .AddPolicyHandler(GetTimeoutPolicy(TimeSpan.FromSeconds(30)));
+
+        services.AddHttpClient("GitHub", client =>
+        {
+            client.BaseAddress = new Uri("https://api.github.com/");
+            client.Timeout = TimeSpan.FromSeconds(15);
+            client.DefaultRequestHeaders.Add("User-Agent", "MCP-CodeReview/1.0");
+        })
+        .AddPolicyHandler(GetGitHubRetryPolicy())
+        .AddPolicyHandler(GetGitHubCircuitBreakerPolicy())
+        .AddPolicyHandler(GetTimeoutPolicy(TimeSpan.FromSeconds(15)));
+
+        services.AddHttpClient("GitLab", client =>
+        {
+            var gitlabHost = configuration["GITLAB_HOST"] ?? "https://gitlab.com";
+            client.BaseAddress = new Uri($"{gitlabHost}/api/v4/");
+            client.Timeout = TimeSpan.FromSeconds(15);
+            client.DefaultRequestHeaders.Add("User-Agent", "MCP-CodeReview/1.0");
+        })
+        .AddPolicyHandler(GetGitLabRetryPolicy())
+        .AddPolicyHandler(GetGitLabCircuitBreakerPolicy())
+        .AddPolicyHandler(GetTimeoutPolicy(TimeSpan.FromSeconds(15)));
+
+        services.AddHttpClient("Elasticsearch", client =>
+        {
+            var elasticsearchUrl = configuration["ELASTICSEARCH_URL"] ?? "http://elasticsearch:9200";
+            client.BaseAddress = new Uri(elasticsearchUrl);
+            client.Timeout = TimeSpan.FromSeconds(10);
+        })
+        .AddPolicyHandler(GetElasticsearchRetryPolicy())
+        .AddPolicyHandler(GetElasticsearchCircuitBreakerPolicy())
+        .AddPolicyHandler(GetTimeoutPolicy(TimeSpan.FromSeconds(10)));
+
+        // Register circuit breaker policies as singletons for monitoring
+        services.AddSingleton<IAsyncPolicy<HttpResponseMessage>>("ClaudeCircuitBreaker", 
+            provider => GetClaudeCircuitBreakerPolicy());
+        services.AddSingleton<IAsyncPolicy<HttpResponseMessage>>("GitHubCircuitBreaker", 
+            provider => GetGitHubCircuitBreakerPolicy());
+        services.AddSingleton<IAsyncPolicy<HttpResponseMessage>>("GitLabCircuitBreaker", 
+            provider => GetGitLabCircuitBreakerPolicy());
+
+        return services;
+    }
+
+    private static IAsyncPolicy<HttpResponseMessage> GetClaudeRetryPolicy()
+    {
+        return HttpPolicyExtensions
+            .HandleTransientHttpError()
+            .Or<TimeoutRejectedException>()
+            .WaitAndRetryAsync(
+                retryCount: 3,
+                sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)) + TimeSpan.FromMilliseconds(Random.Shared.Next(0, 1000)),
+                onRetry: (outcome, timespan, retryCount, context) =>
+                {
+                    var logger = context.GetLogger();
+                    logger?.LogWarning("Claude API retry attempt {RetryCount} after {Delay}ms. Reason: {Reason}",
+                        retryCount, timespan.TotalMilliseconds, outcome.Exception?.Message ?? outcome.Result?.StatusCode.ToString());
+                });
+    }
+
+    private static IAsyncPolicy<HttpResponseMessage> GetClaudeCircuitBreakerPolicy()
+    {
+        return HttpPolicyExtensions
+            .HandleTransientHttpError()
+            .Or<TimeoutRejectedException>()
+            .CircuitBreakerAsync(
+                handledEventsAllowedBeforeBreaking: 5,
+                durationOfBreak: TimeSpan.FromMinutes(1),
+                onBreak: (exception, duration) =>
+                {
+                    var logger = GetLogger("ClaudeCircuitBreaker");
+                    logger?.LogError("Claude API circuit breaker opened for {Duration}. Reason: {Reason}",
+                        duration, exception.Exception?.Message ?? exception.Result?.StatusCode.ToString());
+                },
+                onReset: () =>
+                {
+                    var logger = GetLogger("ClaudeCircuitBreaker");
+                    logger?.LogInformation("Claude API circuit breaker reset");
+                },
+                onHalfOpen: () =>
+                {
+                    var logger = GetLogger("ClaudeCircuitBreaker");
+                    logger?.LogInformation("Claude API circuit breaker half-open");
+                });
+    }
+
+    private static IAsyncPolicy<HttpResponseMessage> GetGitHubRetryPolicy()
+    {
+        return HttpPolicyExtensions
+            .HandleTransientHttpError()
+            .Or<TimeoutRejectedException>()
+            .WaitAndRetryAsync(
+                retryCount: 2,
+                sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(retryAttempt * 2),
+                onRetry: (outcome, timespan, retryCount, context) =>
+                {
+                    var logger = context.GetLogger();
+                    logger?.LogWarning("GitHub API retry attempt {RetryCount} after {Delay}ms. Reason: {Reason}",
+                        retryCount, timespan.TotalMilliseconds, outcome.Exception?.Message ?? outcome.Result?.StatusCode.ToString());
+                });
+    }
+
+    private static IAsyncPolicy<HttpResponseMessage> GetGitHubCircuitBreakerPolicy()
+    {
+        return HttpPolicyExtensions
+            .HandleTransientHttpError()
+            .Or<TimeoutRejectedException>()
+            .CircuitBreakerAsync(
+                handledEventsAllowedBeforeBreaking: 3,
+                durationOfBreak: TimeSpan.FromMinutes(2),
+                onBreak: (exception, duration) =>
+                {
+                    var logger = GetLogger("GitHubCircuitBreaker");
+                    logger?.LogError("GitHub API circuit breaker opened for {Duration}. Reason: {Reason}",
+                        duration, exception.Exception?.Message ?? exception.Result?.StatusCode.ToString());
+                },
+                onReset: () =>
+                {
+                    var logger = GetLogger("GitHubCircuitBreaker");
+                    logger?.LogInformation("GitHub API circuit breaker reset");
+                },
+                onHalfOpen: () =>
+                {
+                    var logger = GetLogger("GitHubCircuitBreaker");
+                    logger?.LogInformation("GitHub API circuit breaker half-open");
+                });
+    }
+
+    private static IAsyncPolicy<HttpResponseMessage> GetGitLabRetryPolicy()
+    {
+        return HttpPolicyExtensions
+            .HandleTransientHttpError()
+            .Or<TimeoutRejectedException>()
+            .WaitAndRetryAsync(
+                retryCount: 2,
+                sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(retryAttempt * 2),
+                onRetry: (outcome, timespan, retryCount, context) =>
+                {
+                    var logger = context.GetLogger();
+                    logger?.LogWarning("GitLab API retry attempt {RetryCount} after {Delay}ms. Reason: {Reason}",
+                        retryCount, timespan.TotalMilliseconds, outcome.Exception?.Message ?? outcome.Result?.StatusCode.ToString());
+                });
+    }
+
+    private static IAsyncPolicy<HttpResponseMessage> GetGitLabCircuitBreakerPolicy()
+    {
+        return HttpPolicyExtensions
+            .HandleTransientHttpError()
+            .Or<TimeoutRejectedException>()
+            .CircuitBreakerAsync(
+                handledEventsAllowedBeforeBreaking: 3,
+                durationOfBreak: TimeSpan.FromMinutes(2),
+                onBreak: (exception, duration) =>
+                {
+                    var logger = GetLogger("GitLabCircuitBreaker");
+                    logger?.LogError("GitLab API circuit breaker opened for {Duration}. Reason: {Reason}",
+                        duration, exception.Exception?.Message ?? exception.Result?.StatusCode.ToString());
+                },
+                onReset: () =>
+                {
+                    var logger = GetLogger("GitLabCircuitBreaker");
+                    logger?.LogInformation("GitLab API circuit breaker reset");
+                },
+                onHalfOpen: () =>
+                {
+                    var logger = GetLogger("GitLabCircuitBreaker");
+                    logger?.LogInformation("GitLab API circuit breaker half-open");
+                });
+    }
+
+    private static IAsyncPolicy<HttpResponseMessage> GetElasticsearchRetryPolicy()
+    {
+        return HttpPolicyExtensions
+            .HandleTransientHttpError()
+            .Or<TimeoutRejectedException>()
+            .WaitAndRetryAsync(
+                retryCount: 2,
+                sleepDurationProvider: retryAttempt => TimeSpan.FromSeconds(retryAttempt),
+                onRetry: (outcome, timespan, retryCount, context) =>
+                {
+                    var logger = context.GetLogger();
+                    logger?.LogWarning("Elasticsearch retry attempt {RetryCount} after {Delay}ms. Reason: {Reason}",
+                        retryCount, timespan.TotalMilliseconds, outcome.Exception?.Message ?? outcome.Result?.StatusCode.ToString());
+                });
+    }
+
+    private static IAsyncPolicy<HttpResponseMessage> GetElasticsearchCircuitBreakerPolicy()
+    {
+        return HttpPolicyExtensions
+            .HandleTransientHttpError()
+            .Or<TimeoutRejectedException>()
+            .CircuitBreakerAsync(
+                handledEventsAllowedBeforeBreaking: 5,
+                durationOfBreak: TimeSpan.FromMinutes(1),
+                onBreak: (exception, duration) =>
+                {
+                    var logger = GetLogger("ElasticsearchCircuitBreaker");
+                    logger?.LogWarning("Elasticsearch circuit breaker opened for {Duration}. Reason: {Reason}",
+                        duration, exception.Exception?.Message ?? exception.Result?.StatusCode.ToString());
+                },
+                onReset: () =>
+                {
+                    var logger = GetLogger("ElasticsearchCircuitBreaker");
+                    logger?.LogInformation("Elasticsearch circuit breaker reset");
+                },
+                onHalfOpen: () =>
+                {
+                    var logger = GetLogger("ElasticsearchCircuitBreaker");
+                    logger?.LogInformation("Elasticsearch circuit breaker half-open");
+                });
+    }
+
+    private static IAsyncPolicy<HttpResponseMessage> GetTimeoutPolicy(TimeSpan timeout)
+    {
+        return Policy.TimeoutAsync<HttpResponseMessage>(timeout, TimeoutStrategy.Optimistic);
+    }
+
+    private static ILogger? GetLogger(string categoryName)
+    {
+        try
+        {
+            var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
+            return loggerFactory.CreateLogger(categoryName);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+}
+
+public static class PollyContextExtensions
+{
+    private const string LoggerKey = "ILogger";
+
+    public static Context WithLogger(this Context context, ILogger logger)
+    {
+        context[LoggerKey] = logger;
+        return context;
+    }
+
+    public static ILogger? GetLogger(this Context context)
+    {
+        return context.TryGetValue(LoggerKey, out var logger) ? logger as ILogger : null;
+    }
+}

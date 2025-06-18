@@ -1,0 +1,164 @@
+using Sentry;
+using Sentry.AspNetCore;
+using Sentry.Serilog;
+
+namespace Mcp.CodeReview.Infrastructure;
+
+public static class SentryExtensions
+{
+    public static WebApplicationBuilder ConfigureSentry(this WebApplicationBuilder builder)
+    {
+        var sentryDsn = Environment.GetEnvironmentVariable("SENTRY_DSN");
+        
+        if (!string.IsNullOrEmpty(sentryDsn))
+        {
+            builder.WebHost.UseSentry(options =>
+            {
+                options.Dsn = sentryDsn;
+                options.Environment = builder.Environment.EnvironmentName;
+                options.Release = GetReleaseVersion();
+                options.TracesSampleRate = GetSampleRate(builder.Environment.EnvironmentName);
+                options.ProfilesSampleRate = GetProfileSampleRate(builder.Environment.EnvironmentName);
+                
+                // Enhanced error capture
+                options.SendDefaultPii = false; // Security: don't send PII
+                options.AttachStacktrace = true;
+                options.IncludeRequestPayload = builder.Environment.IsDevelopment();
+                options.IncludeActivityData = true;
+                
+                // Performance monitoring
+                options.EnableTracing = true;
+                options.StackTraceMode = StackTraceMode.Enhanced;
+                
+                // Custom tags and context
+                options.SetBeforeSend((sentryEvent, hint) =>
+                {
+                    // Add custom context
+                    sentryEvent.SetTag("component", "mcp-code-review");
+                    sentryEvent.SetTag("version", GetReleaseVersion());
+                    
+                    // Add environment context
+                    sentryEvent.Contexts["environment"] = new
+                    {
+                        machine_name = Environment.MachineName,
+                        os_version = Environment.OSVersion.ToString(),
+                        processor_count = Environment.ProcessorCount,
+                        working_set = Environment.WorkingSet,
+                        dotnet_version = Environment.Version.ToString()
+                    };
+                    
+                    return sentryEvent;
+                });
+                
+                // Custom breadcrumb filtering
+                options.SetBeforeBreadcrumb((breadcrumb, hint) =>
+                {
+                    // Filter out sensitive breadcrumbs
+                    if (breadcrumb.Message?.Contains("password", StringComparison.OrdinalIgnoreCase) == true ||
+                        breadcrumb.Message?.Contains("token", StringComparison.OrdinalIgnoreCase) == true ||
+                        breadcrumb.Message?.Contains("key", StringComparison.OrdinalIgnoreCase) == true)
+                    {
+                        breadcrumb.Message = "[FILTERED]";
+                    }
+                    
+                    return breadcrumb;
+                });
+            });
+            
+            // Add Sentry to Serilog
+            builder.Host.UseSerilog((context, services, configuration) =>
+            {
+                configuration.WriteTo.Sentry(o =>
+                {
+                    o.MinimumBreadcrumbLevel = Serilog.Events.LogEventLevel.Debug;
+                    o.MinimumEventLevel = Serilog.Events.LogEventLevel.Error;
+                    o.AttachStackTrace = true;
+                    o.SendDefaultPii = false;
+                    o.IncludeRequestPayload = builder.Environment.IsDevelopment();
+                });
+            });
+        }
+        
+        return builder;
+    }
+    
+    public static WebApplication UseSentryEnrichment(this WebApplication app)
+    {
+        app.Use(async (context, next) =>
+        {
+            // Enrich Sentry scope with request context
+            SentrySdk.ConfigureScope(scope =>
+            {
+                scope.SetTag("request.method", context.Request.Method);
+                scope.SetTag("request.path", context.Request.Path);
+                scope.SetTag("request.query", context.Request.QueryString.ToString());
+                scope.SetTag("user.ip", context.Connection.RemoteIpAddress?.ToString() ?? "unknown");
+                scope.SetTag("user.agent", context.Request.Headers.UserAgent.ToString());
+                
+                scope.SetContext("request", new
+                {
+                    method = context.Request.Method,
+                    path = context.Request.Path.Value,
+                    query = context.Request.QueryString.ToString(),
+                    headers = context.Request.Headers
+                        .Where(h => !IsSensitiveHeader(h.Key))
+                        .ToDictionary(h => h.Key, h => h.Value.ToString()),
+                    content_type = context.Request.ContentType,
+                    content_length = context.Request.ContentLength
+                });
+                
+                if (context.User.Identity?.IsAuthenticated == true)
+                {
+                    scope.User = new Sentry.User
+                    {
+                        Id = context.User.Identity.Name,
+                        IpAddress = context.Connection.RemoteIpAddress?.ToString()
+                    };
+                }
+            });
+            
+            await next();
+        });
+        
+        return app;
+    }
+    
+    private static string GetReleaseVersion()
+    {
+        return System.Reflection.Assembly.GetExecutingAssembly()
+            .GetName().Version?.ToString() ?? "1.0.0";
+    }
+    
+    private static double GetSampleRate(string environment)
+    {
+        return environment.ToLowerInvariant() switch
+        {
+            "development" => 1.0, // 100% in development
+            "staging" => 0.5,     // 50% in staging
+            "production" => 0.1,  // 10% in production
+            _ => 0.1
+        };
+    }
+    
+    private static double GetProfileSampleRate(string environment)
+    {
+        return environment.ToLowerInvariant() switch
+        {
+            "development" => 1.0, // 100% in development
+            "staging" => 0.1,     // 10% in staging
+            "production" => 0.01, // 1% in production
+            _ => 0.01
+        };
+    }
+    
+    private static bool IsSensitiveHeader(string headerName)
+    {
+        var sensitiveHeaders = new[]
+        {
+            "authorization", "cookie", "x-api-key", "x-auth-token",
+            "authentication", "proxy-authorization"
+        };
+        
+        return sensitiveHeaders.Contains(headerName.ToLowerInvariant());
+    }
+}

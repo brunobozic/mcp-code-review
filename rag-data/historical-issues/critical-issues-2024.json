@@ -1,0 +1,163 @@
+[
+  {
+    "id": "SEC-2024-001",
+    "title": "SQL Injection in User Search Functionality",
+    "description": "The user search endpoint was vulnerable to SQL injection attacks due to string concatenation in database queries.",
+    "severity": "Critical",
+    "category": "Security",
+    "date_reported": "2024-01-10",
+    "date_resolved": "2024-01-15",
+    "affected_components": [
+      "UserController.SearchUsers()",
+      "UserService.SearchUsersByEmail()",
+      "UserRepository.FindByEmailPattern()"
+    ],
+    "root_cause": "Direct string concatenation in LINQ query construction instead of using parameterized queries.",
+    "resolution": "Replaced all string concatenation with Entity Framework parameterized queries. Implemented input validation and sanitization.",
+    "code_changes": [
+      "Updated UserRepository to use .Where(u => u.Email.Contains(searchTerm))",
+      "Added input validation in UserController",
+      "Implemented SQL injection detection in integration tests"
+    ],
+    "lessons_learned": [
+      "Always use parameterized queries or ORM methods",
+      "Implement automated security testing in CI/CD pipeline",
+      "Regular security code reviews are essential"
+    ],
+    "prevention_measures": [
+      "Added static analysis rules to detect string concatenation in queries",
+      "Created coding standard for database access patterns",
+      "Implemented security-focused code review checklist"
+    ]
+  },
+  {
+    "id": "PERF-2024-001", 
+    "title": "N+1 Query Problem in User Profile Page",
+    "description": "User profile page was experiencing severe performance issues due to N+1 query pattern when loading user data with related entities.",
+    "severity": "High",
+    "category": "Performance", 
+    "date_reported": "2024-02-08",
+    "date_resolved": "2024-02-15",
+    "affected_components": [
+      "UserProfileController.GetProfile()",
+      "UserService.GetUserWithDetails()",
+      "ProfileRepository.GetUserProfile()"
+    ],
+    "root_cause": "Entity Framework lazy loading causing separate database queries for each related entity (orders, addresses, preferences).",
+    "resolution": "Implemented eager loading with Include() statements and created optimized projection queries for the profile view.",
+    "performance_impact": {
+      "before": {
+        "avg_response_time": "4.8 seconds",
+        "database_queries": "127 queries per request",
+        "memory_usage": "245 MB per request"
+      },
+      "after": {
+        "avg_response_time": "0.2 seconds", 
+        "database_queries": "1 query per request",
+        "memory_usage": "12 MB per request"
+      }
+    },
+    "code_changes": [
+      "Added .Include(u => u.Orders).Include(u => u.Addresses) to user queries",
+      "Created ProfileDto with projection query to select only needed fields", 
+      "Implemented caching for frequently accessed profile data"
+    ],
+    "lessons_learned": [
+      "Always profile database queries during development",
+      "Use Entity Framework Include() for related data",
+      "Consider projection queries for view-specific data"
+    ],
+    "prevention_measures": [
+      "Added performance tests to CI/CD pipeline",
+      "Implemented database query logging in development",
+      "Created performance review checklist for data access code"
+    ]
+  },
+  {
+    "id": "MEM-2024-001",
+    "title": "Memory Leak in File Processing Service",
+    "description": "Application was experiencing gradual memory increase and eventual OutOfMemoryException during large file processing operations.",
+    "severity": "High", 
+    "category": "Performance",
+    "date_reported": "2024-01-22",
+    "date_resolved": "2024-02-03",
+    "affected_components": [
+      "FileProcessingService.ProcessLargeFile()",
+      "ImageResizer.ResizeImage()",
+      "DocumentParser.ExtractText()"
+    ],
+    "root_cause": "Large file streams and image objects were not being properly disposed, accumulating in memory and preventing garbage collection.",
+    "resolution": "Implemented proper disposal patterns using 'using' statements and IDisposable for all resource-heavy operations.",
+    "memory_impact": {
+      "before": {
+        "baseline_memory": "150 MB",
+        "peak_memory": "2.1 GB", 
+        "memory_growth_rate": "50 MB per file processed"
+      },
+      "after": {
+        "baseline_memory": "145 MB",
+        "peak_memory": "280 MB",
+        "memory_growth_rate": "Stable, no growth"
+      }
+    },
+    "code_changes": [
+      "Wrapped all Stream operations in using statements",
+      "Implemented IDisposable in FileProcessor and ImageResizer classes",
+      "Added explicit GC.Collect() calls after processing large batches",
+      "Replaced large object caching with streaming approach"
+    ],
+    "lessons_learned": [
+      "Always implement IDisposable for classes that handle unmanaged resources",
+      "Use using statements consistently for Stream and graphics objects",
+      "Monitor memory usage during development and testing"
+    ],
+    "prevention_measures": [
+      "Added memory usage monitoring to application metrics",
+      "Implemented automated memory leak detection tests",
+      "Created guidelines for handling large files and unmanaged resources"
+    ]
+  },
+  {
+    "id": "AUTH-2024-001",
+    "title": "Authentication Timing Attack Vulnerability", 
+    "description": "Login endpoint was vulnerable to timing attacks allowing attackers to enumerate valid usernames based on response time differences.",
+    "severity": "Medium",
+    "category": "Security",
+    "date_reported": "2024-01-25", 
+    "date_resolved": "2024-01-28",
+    "affected_components": [
+      "AuthController.Login()",
+      "AuthService.ValidateCredentials()",
+      "UserRepository.FindByEmail()"
+    ],
+    "root_cause": "Different code paths for valid vs invalid usernames resulted in measurable timing differences (valid users: ~200ms, invalid users: ~50ms).",
+    "resolution": "Implemented constant-time authentication by always performing password hash verification regardless of username validity.",
+    "timing_analysis": {
+      "before": {
+        "valid_username": "195ms ± 15ms",
+        "invalid_username": "48ms ± 8ms", 
+        "timing_difference": "147ms average"
+      },
+      "after": {
+        "valid_username": "203ms ± 12ms",
+        "invalid_username": "198ms ± 14ms",
+        "timing_difference": "5ms average (within noise threshold)"
+      }
+    },
+    "code_changes": [
+      "Modified authentication to always compute password hash even for invalid users",
+      "Added consistent delay mechanism for all authentication responses",
+      "Implemented rate limiting to prevent brute force attacks"
+    ],
+    "lessons_learned": [
+      "Authentication operations must have consistent timing",
+      "Consider timing attacks during security design",
+      "Implement proper rate limiting for authentication endpoints"
+    ],
+    "prevention_measures": [
+      "Added timing analysis to security testing suite",
+      "Created authentication security guidelines",
+      "Implemented monitoring for authentication timing patterns"
+    ]
+  }
+]
