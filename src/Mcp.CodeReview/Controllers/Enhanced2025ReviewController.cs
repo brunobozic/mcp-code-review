@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Mcp.CodeReview.Abstractions;
 using Mcp.CodeReview.Models;
+using Mcp.CodeReview.Services;
 
 namespace Mcp.CodeReview.Controllers;
 
@@ -13,11 +14,16 @@ public class ReviewController : ControllerBase
 {
     private readonly IAIReviewService _aiReviewService;
     private readonly ILogger<ReviewController> _logger;
+    private readonly IAIServiceProvider? _aiServiceProvider;
 
-    public ReviewController(IAIReviewService aiReviewService, ILogger<ReviewController> logger)
+    public ReviewController(
+        IAIReviewService aiReviewService, 
+        ILogger<ReviewController> logger,
+        IAIServiceProvider? aiServiceProvider = null)
     {
         _aiReviewService = aiReviewService ?? throw new ArgumentNullException(nameof(aiReviewService));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _aiServiceProvider = aiServiceProvider;
     }
 
     /// <summary>
