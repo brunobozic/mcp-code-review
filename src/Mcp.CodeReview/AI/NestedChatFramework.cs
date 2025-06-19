@@ -22,6 +22,151 @@ public class NestedChatFramework
     }
 
     /// <summary>
+    /// Enhanced contextual analysis using repository context and nested conversations
+    /// </summary>
+    public async Task<AgentResult> ConductContextualAnalysis(
+        AgentType agentType,
+        string content,
+        RepositoryContext repositoryContext,
+        Dictionary<string, object> context,
+        CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation("Starting contextual analysis with {AgentType}", agentType);
+        
+        try
+        {
+            // Build contextual prompt that includes repository information
+            var contextualPrompt = BuildContextualPrompt(agentType, content, repositoryContext);
+            
+            // Conduct analysis with full repository context
+            var analysis = await _aiServiceProvider.GenerateReviewAsync(contextualPrompt, cancellationToken);
+            
+            // Parse and structure the results
+            var result = ParseContextualAnalysisResult(agentType, analysis, repositoryContext);
+            
+            _logger.LogInformation("Contextual analysis completed for {AgentType} with confidence {Confidence}", 
+                agentType, result.ConfidenceScore);
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Contextual analysis failed for {AgentType}", agentType);
+            return CreateFailureResult(agentType, ex.Message);
+        }
+    }
+
+    private string BuildContextualPrompt(AgentType agentType, string content, RepositoryContext repositoryContext)
+    {
+        return $@"
+You are a {agentType} agent conducting a contextual code review.
+
+## Code to Review:
+```
+{content}
+```
+
+## Repository Context:
+**Project**: {repositoryContext.ProjectName}
+**Architecture**: {repositoryContext.Structure.ArchitecturePattern}
+**File Types**: {string.Join(", ", repositoryContext.Structure.FilesByType.Keys)}
+**Dependencies**: {string.Join(", ", repositoryContext.Dependencies.Keys.Take(10))}
+
+## Historical Patterns Found:
+{string.Join("\n", repositoryContext.HistoricalPatterns.Take(5).Select(p => $"- {p.Pattern} (similarity: {p.Similarity:F2})"))}
+
+## Team Standards:
+{string.Join("\n", repositoryContext.ProjectStandards.Take(5).Select(s => $"- {s.Title}: {s.Description}"))}
+
+## Related Files Context:
+{string.Join("\n", repositoryContext.RelatedFiles.Keys.Take(3).Select(f => $"- {f}"))}
+
+## Your Analysis Task:
+As a {agentType} specialist, analyze this code considering:
+1. The broader project architecture and patterns
+2. How this code fits within the existing codebase
+3. Compliance with team standards and historical patterns
+4. Dependencies and their impact
+5. Related files and potential side effects
+
+Provide specific findings with references to the repository context when possible.
+Be thorough but focused on {agentType} concerns.
+
+Format your response as:
+**Findings:**
+- [Specific finding with context reference]
+
+**Recommendations:**
+- [Actionable recommendation based on repository analysis]
+
+**Confidence:** [0.0-1.0]
+";
+    }
+
+    private AgentResult ParseContextualAnalysisResult(AgentType agentType, string analysis, RepositoryContext repositoryContext)
+    {
+        var result = new AgentResult
+        {
+            AgentType = agentType,
+            IsSuccessful = true,
+            ProcessingTime = TimeSpan.FromSeconds(2), // Would be measured in real implementation
+            Findings = new List<Finding>(),
+            Recommendations = new List<Recommendation>(),
+            ConfidenceScore = 0.8 // Default, would be parsed from response
+        };
+
+        // Parse findings
+        var findingsMatch = System.Text.RegularExpressions.Regex.Match(analysis, @"\*\*Findings:\*\*(.*?)\*\*Recommendations:", System.Text.RegularExpressions.RegexOptions.Singleline);
+        if (findingsMatch.Success)
+        {
+            var findings = findingsMatch.Groups[1].Value.Split('\n')
+                .Where(line => line.Trim().StartsWith("-"))
+                .Select(line => line.Trim().TrimStart('-').Trim())
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .Select(line => new Finding { Description = line })
+                .ToList();
+            
+            result.Findings.AddRange(findings);
+        }
+
+        // Parse recommendations
+        var recommendationsMatch = System.Text.RegularExpressions.Regex.Match(analysis, @"\*\*Recommendations:\*\*(.*?)\*\*Confidence:", System.Text.RegularExpressions.RegexOptions.Singleline);
+        if (recommendationsMatch.Success)
+        {
+            var recommendations = recommendationsMatch.Groups[1].Value.Split('\n')
+                .Where(line => line.Trim().StartsWith("-"))
+                .Select(line => line.Trim().TrimStart('-').Trim())
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .Select(line => new Recommendation { Title = line })
+                .ToList();
+            
+            result.Recommendations.AddRange(recommendations);
+        }
+
+        // Parse confidence
+        var confidenceMatch = System.Text.RegularExpressions.Regex.Match(analysis, @"\*\*Confidence:\*\*\s*(\d*\.?\d+)");
+        if (confidenceMatch.Success && double.TryParse(confidenceMatch.Groups[1].Value, out var confidence))
+        {
+            result.ConfidenceScore = confidence;
+        }
+
+        return result;
+    }
+
+    private AgentResult CreateFailureResult(AgentType agentType, string error)
+    {
+        return new AgentResult
+        {
+            AgentType = agentType,
+            Success = false,
+            Findings = new List<Finding> { new Finding { Description = $"Analysis failed: {error}" } },
+            Recommendations = new List<Recommendation>(),
+            ConfidenceScore = 0.0,
+            ExecutionTime = TimeSpan.Zero
+        };
+    }
+
+    /// <summary>
     /// Conduct iterative analysis using writer-critic pattern
     /// </summary>
     public async Task<AgentResult> ConductIterativeAnalysis(

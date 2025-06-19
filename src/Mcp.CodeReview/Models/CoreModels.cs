@@ -75,6 +75,23 @@ public class AgentResult
     public List<string> ReasoningChain { get; set; } = new();
     public Dictionary<string, object> Metrics { get; set; } = new();
     public Dictionary<string, object> Metadata { get; set; } = new();
+    
+    // Execution status and timing properties
+    public bool Success { get; set; } = true;
+    public TimeSpan? ExecutionTime { get; set; }
+    
+    // Legacy properties for compatibility
+    public bool IsSuccessful 
+    { 
+        get => Success; 
+        set => Success = value; 
+    }
+    
+    public TimeSpan ProcessingTime 
+    { 
+        get => ExecutionTime ?? TimeSpan.Zero; 
+        set => ExecutionTime = value; 
+    }
 }
 
 /// <summary>

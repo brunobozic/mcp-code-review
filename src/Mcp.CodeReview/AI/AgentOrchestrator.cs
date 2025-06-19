@@ -32,7 +32,7 @@ public class AgentOrchestrator : IAgentOrchestrator
     }
 
     /// <inheritdoc />
-    public async Task<AgentExecutionResult[]> ExecuteAgentsParallelAsync(
+    public async Task<Abstractions.AgentExecutionResult[]> ExecuteAgentsParallelAsync(
         IEnumerable<AgentExecutionTask> agentTasks, 
         CancellationToken cancellationToken = default)
     {
@@ -46,7 +46,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to execute agents in parallel");
-            return Array.Empty<AgentExecutionResult>();
+            return Array.Empty<Abstractions.AgentExecutionResult>();
         }
     }
 
@@ -65,7 +65,7 @@ public class AgentOrchestrator : IAgentOrchestrator
     }
 
     // Private implementation methods
-    private async Task<AgentExecutionResult[]> ExecuteAgentsInternalAsync(
+    private async Task<Abstractions.AgentExecutionResult[]> ExecuteAgentsInternalAsync(
         AgentExecutionTask[] tasks, 
         CancellationToken cancellationToken)
     {
@@ -94,7 +94,7 @@ public class AgentOrchestrator : IAgentOrchestrator
         return results;
     }
 
-    private async Task<AgentExecutionResult> ExecuteSingleAgentAsync(
+    private async Task<Abstractions.AgentExecutionResult> ExecuteSingleAgentAsync(
         AgentExecutionTask task, 
         string correlationId, 
         CancellationToken cancellationToken)
@@ -128,7 +128,7 @@ public class AgentOrchestrator : IAgentOrchestrator
             _logger.LogDebug("Completed execution of {AgentType} agent in {ElapsedMs}ms", 
                 task.AgentType, executionTime.TotalMilliseconds);
 
-            return new AgentExecutionResult
+            return new Abstractions.AgentExecutionResult
             {
                 AgentType = task.AgentType,
                 Result = result,
@@ -143,7 +143,7 @@ public class AgentOrchestrator : IAgentOrchestrator
             _logger.LogError(ex, "Failed to execute {AgentType} agent after {ElapsedMs}ms", 
                 task.AgentType, executionTime.TotalMilliseconds);
 
-            return new AgentExecutionResult
+            return new Abstractions.AgentExecutionResult
             {
                 AgentType = task.AgentType,
                 Result = CreateFailureResult(task.AgentType),
