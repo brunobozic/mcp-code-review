@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Mcp.CodeReview.Models;
 
 namespace Mcp.CodeReview.RAG
 {
@@ -57,6 +58,48 @@ namespace Mcp.CodeReview.RAG
         /// Initializes collections if they don't exist
         /// </summary>
         Task InitializeCollectionsAsync(CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Dynamically seeds the knowledge base with discovered patterns from repository analysis
+        /// </summary>
+        Task SeedKnowledgeBaseAsync(
+            string projectId,
+            List<CodePattern> discoveredPatterns,
+            List<CodingStandard> projectStandards,
+            Dictionary<string, object> architectureInsights,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Searches for similar issues and their solutions across projects
+        /// </summary>
+        Task<List<RetrievedContext>> SearchSimilarIssuesAndSolutionsAsync(
+            string issueDescription,
+            string errorMessage = null,
+            string codeContext = null,
+            int topK = 8,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Stores a resolved issue for future reference
+        /// </summary>
+        Task StoreResolvedIssueAsync(
+            string projectId,
+            string issueTitle,
+            string issueDescription,
+            string solution,
+            string codeContext,
+            List<string> tags = null,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Updates team patterns based on recent code review feedback
+        /// </summary>
+        Task UpdateTeamPatternsAsync(
+            string projectId,
+            List<string> preferredPatterns,
+            List<string> avoidedPatterns,
+            Dictionary<string, string> patternReasoning,
+            CancellationToken cancellationToken = default);
     }
 
     /// <summary>

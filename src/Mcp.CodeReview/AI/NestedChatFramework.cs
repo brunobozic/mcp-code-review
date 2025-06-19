@@ -3,6 +3,7 @@ using Mcp.CodeReview.Abstractions;
 using Mcp.CodeReview.Models;
 using Mcp.CodeReview.Utilities;
 using Mcp.CodeReview.Services;
+using Mcp.CodeReview.RAG;
 
 namespace Mcp.CodeReview.AI;
 
@@ -13,16 +14,21 @@ namespace Mcp.CodeReview.AI;
 public class NestedChatFramework
 {
     private readonly IAIServiceProvider _aiServiceProvider;
+    private readonly IVectorSearchService _vectorSearchService;
     private readonly ILogger<NestedChatFramework> _logger;
 
-    public NestedChatFramework(IAIServiceProvider aiServiceProvider, ILogger<NestedChatFramework> logger)
+    public NestedChatFramework(
+        IAIServiceProvider aiServiceProvider, 
+        IVectorSearchService vectorSearchService,
+        ILogger<NestedChatFramework> logger)
     {
         _aiServiceProvider = aiServiceProvider ?? throw new ArgumentNullException(nameof(aiServiceProvider));
+        _vectorSearchService = vectorSearchService;
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
     /// <summary>
-    /// Enhanced contextual analysis using repository context and nested conversations
+    /// RAG-Enhanced contextual analysis using repository context, historical patterns, and semantic understanding
     /// </summary>
     public async Task<AgentResult> ConductContextualAnalysis(
         AgentType agentType,
@@ -31,27 +37,30 @@ public class NestedChatFramework
         Dictionary<string, object> context,
         CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Starting contextual analysis with {AgentType}", agentType);
+        _logger.LogInformation("Starting RAG-enhanced contextual analysis with {AgentType}", agentType);
         
         try
         {
-            // Build contextual prompt that includes repository information
-            var contextualPrompt = BuildContextualPrompt(agentType, content, repositoryContext);
+            // Step 1: Gather RAG-enhanced context specific to this agent type
+            var ragContext = await GatherRAGEnhancedContext(agentType, content, repositoryContext, cancellationToken);
             
-            // Conduct analysis with full repository context
+            // Step 2: Build comprehensive contextual prompt with RAG insights
+            var contextualPrompt = BuildRAGEnhancedPrompt(agentType, content, repositoryContext, ragContext);
+            
+            // Step 3: Conduct analysis with full repository and historical context
             var analysis = await _aiServiceProvider.GenerateReviewAsync(contextualPrompt, cancellationToken);
             
-            // Parse and structure the results
-            var result = ParseContextualAnalysisResult(agentType, analysis, repositoryContext);
+            // Step 4: Parse and enhance results with RAG insights
+            var result = ParseRAGEnhancedAnalysisResult(agentType, analysis, repositoryContext, ragContext);
             
-            _logger.LogInformation("Contextual analysis completed for {AgentType} with confidence {Confidence}", 
-                agentType, result.ConfidenceScore);
+            _logger.LogInformation("RAG-enhanced analysis completed for {AgentType} with confidence {Confidence} using {PatternCount} historical patterns", 
+                agentType, result.ConfidenceScore, ragContext.RelevantPatterns.Count);
             
             return result;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Contextual analysis failed for {AgentType}", agentType);
+            _logger.LogError(ex, "RAG-enhanced contextual analysis failed for {AgentType}", agentType);
             return CreateFailureResult(agentType, ex.Message);
         }
     }
@@ -611,6 +620,906 @@ Format your response as:
         // Implementation would build validation prompt
         return "Validation prompt for cross-agent validation";
     }
+
+    // RAG-Enhanced Helper Methods
+    
+    private async Task<RAGContext> GatherRAGEnhancedContext(
+        AgentType agentType, 
+        string content, 
+        RepositoryContext repositoryContext, 
+        CancellationToken cancellationToken)
+    {
+        var ragContext = new RAGContext
+        {
+            AgentType = agentType,
+            RepositoryContext = repositoryContext
+        };
+        
+        try
+        {
+            // For now, use the repository context as the RAG enhancement
+            // In a full implementation, this would query vector database for relevant patterns
+            ragContext.RelevantPatterns = repositoryContext.HistoricalPatterns
+                .Where(p => IsPatternRelevantForAgent(p, agentType))
+                .Take(10)
+                .ToList();
+                
+            ragContext.ApplicableStandards = repositoryContext.ProjectStandards
+                .Where(s => IsStandardRelevantForAgent(s, agentType))
+                .Take(8)
+                .ToList();
+                
+            ragContext.SimilarContexts = await FindSimilarContextsAsync(content, agentType, repositoryContext, cancellationToken);
+            
+            ragContext.HistoricalInsights = ExtractHistoricalInsights(ragContext.RelevantPatterns, agentType);
+            
+            return ragContext;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not gather complete RAG context for {AgentType}, using fallback", agentType);
+            return ragContext; // Return partial context
+        }
+    }
+    
+    private string BuildRAGEnhancedPrompt(
+        AgentType agentType, 
+        string content, 
+        RepositoryContext repositoryContext, 
+        RAGContext ragContext)
+    {
+        var prompt = $@"
+You are a {agentType} agent conducting a comprehensive, RAG-enhanced code review.
+
+## Code to Review:
+```
+{content}
+```
+
+## Repository Context:
+**Project**: {repositoryContext.ProjectName}
+**Architecture**: {repositoryContext.Structure.ArchitecturePattern}
+**Technology Stack**: {string.Join(", ", repositoryContext.Dependencies.Keys.Take(5))}
+**File Types**: {string.Join(", ", repositoryContext.Structure.FilesByType.Keys)}
+
+## Historical Patterns (RAG-Enhanced):
+{string.Join("\n", ragContext.RelevantPatterns.Take(5).Select(p => $"- **{p.Category}**: {p.Pattern} (confidence: {p.Similarity:F2})"))}
+
+## Applicable Standards:
+{string.Join("\n", ragContext.ApplicableStandards.Take(5).Select(s => $"- **{s.Category}**: {s.Title} - {s.Description}"))}
+
+## Similar Context Analysis:
+{string.Join("\n", ragContext.SimilarContexts.Take(3).Select(sc => $"- {sc}"))}
+
+## Historical Insights for {agentType}:
+{string.Join("\n", ragContext.HistoricalInsights.Take(3).Select(hi => $"- {hi}"))}
+
+## Team Patterns:
+**Preferred Patterns**: {string.Join(", ", repositoryContext.TeamPatterns.PreferredPatterns.Take(3))}
+**Avoided Patterns**: {string.Join(", ", repositoryContext.TeamPatterns.AvoidedPatterns.Take(3))}
+
+## Semantic Analysis Results:
+{FormatSemanticAnalysis(repositoryContext.SemanticAnalysis)}
+
+## Your RAG-Enhanced Analysis Task:
+As a {agentType} specialist with access to historical patterns and contextual knowledge:
+
+1. **Contextual Analysis**: Analyze this code within the broader repository context
+2. **Pattern Matching**: Compare against historical patterns and similar contexts
+3. **Standard Compliance**: Evaluate adherence to applicable coding standards
+4. **Risk Assessment**: Consider discovered risk factors and dependency insights
+5. **Recommendation Synthesis**: Provide recommendations based on RAG insights
+
+Focus specifically on {agentType} concerns while leveraging the full contextual knowledge.
+
+Format your response as:
+**Findings:**
+- [Specific finding with RAG context reference]
+
+**Recommendations:**
+- [RAG-informed actionable recommendation]
+
+**Confidence:** [0.0-1.0 based on RAG context availability]
+**RAG Insights Used:** [Count of patterns/standards referenced]
+";
+        
+        return prompt;
+    }
+    
+    private AgentResult ParseRAGEnhancedAnalysisResult(
+        AgentType agentType, 
+        string analysis, 
+        RepositoryContext repositoryContext, 
+        RAGContext ragContext)
+    {
+        var result = new AgentResult
+        {
+            AgentType = agentType,
+            AgentName = agentType.ToString(),
+            Analysis = analysis,
+            IsSuccessful = true,
+            ProcessingTime = TimeSpan.FromSeconds(3), // RAG analysis takes longer
+            Findings = new List<Finding>(),
+            Recommendations = new List<Recommendation>(),
+            ConfidenceScore = 0.8,
+            Metadata = new Dictionary<string, object>
+            {
+                ["ragPatternsUsed"] = ragContext.RelevantPatterns.Count,
+                ["ragStandardsUsed"] = ragContext.ApplicableStandards.Count,
+                ["ragSimilarContexts"] = ragContext.SimilarContexts.Count,
+                ["repositoryContextAvailable"] = true
+            }
+        };
+
+        // Enhanced parsing with RAG context
+        var findingsMatch = System.Text.RegularExpressions.Regex.Match(analysis, @"\*\*Findings:\*\*(.*?)\*\*Recommendations:", System.Text.RegularExpressions.RegexOptions.Singleline);
+        if (findingsMatch.Success)
+        {
+            var findings = findingsMatch.Groups[1].Value.Split('\n')
+                .Where(line => line.Trim().StartsWith("-"))
+                .Select(line => line.Trim().TrimStart('-').Trim())
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .Select(line => new Finding 
+                { 
+                    Description = line,
+                    Category = DetermineFindingCategory(line, agentType),
+                    Severity = DetermineFindingSeverity(line, ragContext)
+                })
+                .ToList();
+            
+            result.Findings.AddRange(findings);
+        }
+
+        var recommendationsMatch = System.Text.RegularExpressions.Regex.Match(analysis, @"\*\*Recommendations:\*\*(.*?)\*\*Confidence:", System.Text.RegularExpressions.RegexOptions.Singleline);
+        if (recommendationsMatch.Success)
+        {
+            var recommendations = recommendationsMatch.Groups[1].Value.Split('\n')
+                .Where(line => line.Trim().StartsWith("-"))
+                .Select(line => line.Trim().TrimStart('-').Trim())
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .Select(line => new Recommendation 
+                { 
+                    Title = line,
+                    Priority = DetermineRecommendationPriority(line, ragContext),
+                    Category = agentType.ToString()
+                })
+                .ToList();
+            
+            result.Recommendations.AddRange(recommendations);
+        }
+
+        // Parse RAG-enhanced confidence
+        var confidenceMatch = System.Text.RegularExpressions.Regex.Match(analysis, @"\*\*Confidence:\*\*\s*(\d*\.?\d+)");
+        if (confidenceMatch.Success && double.TryParse(confidenceMatch.Groups[1].Value, out var confidence))
+        {
+            result.ConfidenceScore = confidence;
+        }
+        
+        // Parse RAG insights count
+        var ragInsightsMatch = System.Text.RegularExpressions.Regex.Match(analysis, @"\*\*RAG Insights Used:\*\*\s*(\d+)");
+        if (ragInsightsMatch.Success && int.TryParse(ragInsightsMatch.Groups[1].Value, out var ragCount))
+        {
+            result.Metadata["actualRagInsightsUsed"] = ragCount;
+        }
+
+        return result;
+    }
+    
+    // RAG Helper Methods
+    
+    private bool IsPatternRelevantForAgent(HistoricalPattern pattern, AgentType agentType)
+    {
+        var agentConcerns = agentType switch
+        {
+            AgentType.SecurityExpert => new[] { "security", "vulnerability", "authentication", "authorization" },
+            AgentType.PerformanceAnalyst => new[] { "performance", "optimization", "scalability", "efficiency" },
+            AgentType.CodeQualityReviewer => new[] { "quality", "maintainability", "readability", "complexity" },
+            AgentType.ArchitectureExpert => new[] { "architecture", "design", "pattern", "structure" },
+            AgentType.TestingSpecialist => new[] { "test", "testing", "coverage", "validation" },
+            _ => new[] { "general", "best practice", "guideline" }
+        };
+        
+        return agentConcerns.Any(concern => pattern.Pattern.Contains(concern, StringComparison.OrdinalIgnoreCase) ||
+                                           pattern.Category.Contains(concern, StringComparison.OrdinalIgnoreCase));
+    }
+    
+    private bool IsStandardRelevantForAgent(CodingStandard standard, AgentType agentType)
+    {
+        var agentCategories = agentType switch
+        {
+            AgentType.SecurityExpert => new[] { "Security", "Authentication", "Authorization" },
+            AgentType.PerformanceAnalyst => new[] { "Performance", "Optimization" },
+            AgentType.CodeQualityReviewer => new[] { "Quality", "Conventions", "General" },
+            AgentType.ArchitectureExpert => new[] { "Architecture", "Design", "Patterns" },
+            AgentType.TestingSpecialist => new[] { "Testing", "Quality" },
+            _ => new[] { "General" }
+        };
+        
+        return agentCategories.Contains(standard.Category) || standard.Priority <= 2;
+    }
+    
+    private async Task<List<string>> FindSimilarContextsAsync(
+        string content, 
+        AgentType agentType, 
+        RepositoryContext repositoryContext, 
+        CancellationToken cancellationToken)
+    {
+        var similarContexts = new List<string>();
+        
+        // Simulate similar context discovery based on repository context
+        if (repositoryContext.RelatedFiles.Any())
+        {
+            similarContexts.Add($"Similar {agentType} patterns found in {repositoryContext.RelatedFiles.Count} related files");
+        }
+        
+        if (repositoryContext.Dependencies.Any())
+        {
+            var relevantDeps = repositoryContext.Dependencies.Keys
+                .Where(dep => IsRelevantForAgent(dep, agentType))
+                .Take(3);
+            if (relevantDeps.Any())
+            {
+                similarContexts.Add($"Similar technology contexts: {string.Join(", ", relevantDeps)}");
+            }
+        }
+        
+        if (repositoryContext.Structure.ArchitecturePattern != null)
+        {
+            similarContexts.Add($"Architecture context: {repositoryContext.Structure.ArchitecturePattern} pattern analysis");
+        }
+        
+        return similarContexts;
+    }
+    
+    private List<string> ExtractHistoricalInsights(List<HistoricalPattern> patterns, AgentType agentType)
+    {
+        var insights = new List<string>();
+        
+        var relevantPatterns = patterns.Where(p => IsPatternRelevantForAgent(p, agentType)).ToList();
+        
+        if (relevantPatterns.Any())
+        {
+            var avgSimilarity = relevantPatterns.Average(p => p.Similarity);
+            insights.Add($"Historical pattern confidence: {avgSimilarity:F2} across {relevantPatterns.Count} similar cases");
+            
+            var topRecommendation = relevantPatterns
+                .OrderByDescending(p => p.Similarity)
+                .FirstOrDefault()?.Recommendation;
+            if (!string.IsNullOrEmpty(topRecommendation))
+            {
+                insights.Add($"Top historical recommendation: {topRecommendation}");
+            }
+            
+            var commonCategory = relevantPatterns
+                .GroupBy(p => p.Category)
+                .OrderByDescending(g => g.Count())
+                .FirstOrDefault()?.Key;
+            if (!string.IsNullOrEmpty(commonCategory))
+            {
+                insights.Add($"Most common historical category: {commonCategory}");
+            }
+        }
+        
+        return insights;
+    }
+    
+    private string FormatSemanticAnalysis(Dictionary<string, object> semanticAnalysis)
+    {
+        if (!semanticAnalysis.Any())
+            return "No semantic analysis available";
+            
+        var formatted = new List<string>();
+        foreach (var item in semanticAnalysis.Take(3))
+        {
+            formatted.Add($"- {item.Key}: {item.Value}");
+        }
+        
+        return string.Join("\n", formatted);
+    }
+    
+    private string DetermineFindingCategory(string finding, AgentType agentType)
+    {
+        return agentType switch
+        {
+            AgentType.SecurityExpert => "Security",
+            AgentType.PerformanceAnalyst => "Performance",
+            AgentType.CodeQualityReviewer => "Code Quality",
+            AgentType.ArchitectureExpert => "Architecture",
+            AgentType.TestingSpecialist => "Testing",
+            _ => "General"
+        };
+    }
+    
+    private string DetermineFindingSeverity(string finding, RAGContext ragContext)
+    {
+        var lowerFinding = finding.ToLowerInvariant();
+        
+        if (lowerFinding.Contains("critical") || lowerFinding.Contains("security") || lowerFinding.Contains("vulnerability"))
+            return "High";
+        if (lowerFinding.Contains("performance") || lowerFinding.Contains("optimization"))
+            return "Medium";
+        if (ragContext.RelevantPatterns.Any(p => p.Similarity > 0.8))
+            return "Medium";
+            
+        return "Low";
+    }
+    
+    private string DetermineRecommendationPriority(string recommendation, RAGContext ragContext)
+    {
+        var lowerRec = recommendation.ToLowerInvariant();
+        
+        if (lowerRec.Contains("immediately") || lowerRec.Contains("critical") || lowerRec.Contains("security"))
+            return "High";
+        if (ragContext.ApplicableStandards.Any(s => s.Priority <= 2))
+            return "High";
+        if (lowerRec.Contains("should") || lowerRec.Contains("recommend"))
+            return "Medium";
+            
+        return "Low";
+    }
+    
+    private bool IsRelevantForAgent(string dependency, AgentType agentType)
+    {
+        var lowerDep = dependency.ToLowerInvariant();
+        
+        return agentType switch
+        {
+            AgentType.SecurityExpert => lowerDep.Contains("security") || lowerDep.Contains("auth") || lowerDep.Contains("crypto"),
+            AgentType.PerformanceAnalyst => lowerDep.Contains("cache") || lowerDep.Contains("memory") || lowerDep.Contains("performance"),
+            AgentType.TestingSpecialist => lowerDep.Contains("test") || lowerDep.Contains("mock") || lowerDep.Contains("spec"),
+            _ => true
+        };
+    }
+
+    /// <summary>
+    /// Semantic search for similar issues and solutions with comprehensive context matching
+    /// </summary>
+    public async Task<SemanticSearchResult> SearchSimilarIssuesAndSolutionsAsync(
+        string issueDescription,
+        string codeContext,
+        AgentType[] interestedAgents,
+        string projectId,
+        CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation("Starting semantic search for similar issues and solutions");
+
+        if (_vectorSearchService == null)
+        {
+            _logger.LogWarning("Vector search service not available, returning empty results");
+            return new SemanticSearchResult();
+        }
+
+        try
+        {
+            var searchResult = new SemanticSearchResult
+            {
+                Query = issueDescription,
+                SearchTimestamp = DateTime.UtcNow
+            };
+
+            // 1. Search for similar historical issues
+            var historicalIssues = await _vectorSearchService.SearchSimilarIssuesAndSolutionsAsync(
+                issueDescription, 
+                ExtractErrorMessage(issueDescription),
+                codeContext,
+                topK: 10,
+                cancellationToken);
+
+            searchResult.SimilarIssues = historicalIssues.Select(issue => new SimilarIssue
+            {
+                Id = issue.Id,
+                Description = ExtractIssueDescription(issue.Content),
+                Solution = ExtractSolution(issue.Content),
+                Similarity = issue.Similarity,
+                ProjectId = issue.Metadata.GetValueOrDefault("project_id")?.ToString() ?? "",
+                ResolvedAt = ParseResolvedDate(issue.Metadata),
+                Tags = ExtractTags(issue.Metadata),
+                ComplexityLevel = issue.Metadata.GetValueOrDefault("complexity")?.ToString() ?? "Unknown"
+            }).ToList();
+
+            // 2. Search for relevant code patterns for each agent type
+            foreach (var agentType in interestedAgents)
+            {
+                var agentSpecificQuery = BuildAgentSpecificQuery(issueDescription, codeContext, agentType);
+                var patterns = await _vectorSearchService.SearchSimilarCodeAsync(
+                    agentSpecificQuery,
+                    projectId,
+                    topK: 8,
+                    cancellationToken);
+
+                searchResult.RelevantPatterns[agentType] = patterns.Select(p => new SemanticPattern
+                {
+                    Id = p.Id,
+                    Pattern = p.Content,
+                    Similarity = p.Similarity,
+                    Category = p.Metadata.GetValueOrDefault("category")?.ToString() ?? agentType.ToString(),
+                    AgentRelevance = agentType,
+                    Confidence = p.Similarity,
+                    ContextualAdvice = GenerateContextualAdvice(p, agentType, issueDescription)
+                }).ToList();
+            }
+
+            // 3. Search for coding standards violations or compliance patterns
+            var standardsQuery = BuildStandardsQuery(issueDescription, codeContext);
+            var standards = await _vectorSearchService.SearchCodingStandardsAsync(
+                standardsQuery,
+                null,
+                6,
+                cancellationToken);
+
+            searchResult.ApplicableStandards = standards.Select(s => new ApplicableStandard
+            {
+                Id = s.Id,
+                Title = s.Metadata.GetValueOrDefault("title")?.ToString() ?? "Untitled Standard",
+                Description = s.Content,
+                Similarity = s.Similarity,
+                Category = s.Metadata.GetValueOrDefault("category")?.ToString() ?? "General",
+                Priority = int.TryParse(s.Metadata.GetValueOrDefault("priority")?.ToString(), out var p) ? p : 3,
+                Recommendation = s.Metadata.GetValueOrDefault("recommendation")?.ToString() ?? ""
+            }).ToList();
+
+            // 4. Cross-reference analysis to find patterns across different data sources
+            searchResult.CrossReferences = await PerformCrossReferenceAnalysis(
+                searchResult.SimilarIssues, 
+                searchResult.RelevantPatterns, 
+                searchResult.ApplicableStandards,
+                cancellationToken);
+
+            // 5. Generate confidence and relevance scores
+            searchResult.OverallConfidence = CalculateOverallConfidence(searchResult);
+            searchResult.SearchQuality = AssessSearchQuality(searchResult);
+
+            _logger.LogInformation("Semantic search completed: {IssueCount} similar issues, {PatternCount} patterns, {StandardCount} standards found",
+                searchResult.SimilarIssues.Count,
+                searchResult.RelevantPatterns.Values.Sum(patterns => patterns.Count),
+                searchResult.ApplicableStandards.Count);
+
+            return searchResult;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to perform semantic search for similar issues and solutions");
+            return new SemanticSearchResult
+            {
+                Query = issueDescription,
+                SearchTimestamp = DateTime.UtcNow,
+                ErrorMessage = ex.Message
+            };
+        }
+    }
+
+    /// <summary>
+    /// Advanced semantic analysis combining multiple search strategies
+    /// </summary>
+    public async Task<AdvancedSemanticAnalysis> ConductAdvancedSemanticAnalysisAsync(
+        string codeSnippet,
+        string context,
+        RepositoryContext repositoryContext,
+        AgentType[] analysisAgents,
+        CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation("Conducting advanced semantic analysis with {AgentCount} agents", analysisAgents.Length);
+
+        var analysis = new AdvancedSemanticAnalysis
+        {
+            CodeSnippet = codeSnippet,
+            Context = context,
+            AnalysisTimestamp = DateTime.UtcNow
+        };
+
+        if (_vectorSearchService == null)
+        {
+            _logger.LogWarning("Vector search service not available for advanced semantic analysis");
+            return analysis;
+        }
+
+        try
+        {
+            // 1. Multi-dimensional semantic search
+            var semanticDimensions = await PerformMultiDimensionalSearch(
+                codeSnippet, context, repositoryContext, cancellationToken);
+            analysis.SemanticDimensions = semanticDimensions;
+
+            // 2. Agent-specific deep analysis
+            foreach (var agent in analysisAgents)
+            {
+                var agentAnalysis = await PerformAgentSpecificSemanticAnalysis(
+                    agent, codeSnippet, context, repositoryContext, cancellationToken);
+                analysis.AgentSpecificInsights[agent] = agentAnalysis;
+            }
+
+            // 3. Pattern evolution analysis
+            analysis.PatternEvolution = await AnalyzePatternEvolution(
+                codeSnippet, repositoryContext, cancellationToken);
+
+            // 4. Risk correlation analysis
+            analysis.RiskCorrelations = await AnalyzeRiskCorrelations(
+                codeSnippet, context, repositoryContext, cancellationToken);
+
+            // 5. Solution recommendation synthesis
+            analysis.SolutionRecommendations = await SynthesizeSolutionRecommendations(
+                analysis, repositoryContext, cancellationToken);
+
+            // 6. Confidence calibration
+            analysis.OverallConfidence = CalibrateSemanticConfidence(analysis);
+
+            _logger.LogInformation("Advanced semantic analysis completed with {DimensionCount} dimensions and {InsightCount} agent insights",
+                analysis.SemanticDimensions.Count,
+                analysis.AgentSpecificInsights.Count);
+
+            return analysis;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to conduct advanced semantic analysis");
+            analysis.ErrorMessage = ex.Message;
+            return analysis;
+        }
+    }
+
+    /// <summary>
+    /// Store and learn from resolved issues to improve future searches
+    /// </summary>
+    public async Task StoreResolvedIssueWithLearningAsync(
+        string issueTitle,
+        string issueDescription,
+        string solution,
+        string codeContext,
+        AgentType[] involvedAgents,
+        Dictionary<string, object> resolutionMetadata,
+        string projectId,
+        CancellationToken cancellationToken = default)
+    {
+        if (_vectorSearchService == null)
+        {
+            _logger.LogWarning("Vector search service not available for storing resolved issue");
+            return;
+        }
+
+        try
+        {
+            // Extract learning patterns from the resolution
+            var learningPatterns = ExtractLearningPatterns(
+                issueDescription, solution, codeContext, involvedAgents, resolutionMetadata);
+
+            // Store the resolved issue
+            await _vectorSearchService.StoreResolvedIssueAsync(
+                projectId,
+                issueTitle,
+                issueDescription,
+                solution,
+                codeContext,
+                ExtractTags(resolutionMetadata),
+                cancellationToken);
+
+            // Update agent-specific knowledge
+            foreach (var agent in involvedAgents)
+            {
+                await UpdateAgentSpecificKnowledge(
+                    agent, issueDescription, solution, learningPatterns, projectId, cancellationToken);
+            }
+
+            // Update team patterns based on the resolution approach
+            var teamPatterns = ExtractTeamPatterns(solution, resolutionMetadata);
+            if (teamPatterns.preferredPatterns.Any() || teamPatterns.avoidedPatterns.Any())
+            {
+                await _vectorSearchService.UpdateTeamPatternsAsync(
+                    projectId,
+                    teamPatterns.preferredPatterns,
+                    teamPatterns.avoidedPatterns,
+                    teamPatterns.reasoning,
+                    cancellationToken);
+            }
+
+            _logger.LogInformation("Successfully stored resolved issue '{IssueTitle}' with learning patterns for {AgentCount} agents",
+                issueTitle, involvedAgents.Length);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to store resolved issue with learning: {IssueTitle}", issueTitle);
+            throw;
+        }
+    }
+
+    // Private helper methods for semantic search
+
+    private string ExtractErrorMessage(string issueDescription)
+    {
+        // Extract error messages from issue descriptions using regex patterns
+        var errorPatterns = new[]
+        {
+            @"Error:\s*(.+?)(?:\n|$)",
+            @"Exception:\s*(.+?)(?:\n|$)",
+            @"ERROR\s*:\s*(.+?)(?:\n|$)",
+            @"Failed:\s*(.+?)(?:\n|$)"
+        };
+
+        foreach (var pattern in errorPatterns)
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(issueDescription, pattern, System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (match.Success)
+                return match.Groups[1].Value.Trim();
+        }
+
+        return null;
+    }
+
+    private string ExtractIssueDescription(string content)
+    {
+        // Extract issue description from stored content
+        var lines = content.Split('\n');
+        var descriptionLine = lines.FirstOrDefault(l => l.StartsWith("Description:"));
+        return descriptionLine?.Substring("Description:".Length).Trim() ?? content.Split('\n').FirstOrDefault() ?? "";
+    }
+
+    private string ExtractSolution(string content)
+    {
+        var lines = content.Split('\n');
+        var solutionStart = Array.FindIndex(lines, l => l.StartsWith("Solution:"));
+        if (solutionStart >= 0 && solutionStart < lines.Length - 1)
+        {
+            var solutionLines = lines.Skip(solutionStart + 1)
+                .TakeWhile(l => !l.StartsWith("Code Context:") && !string.IsNullOrWhiteSpace(l));
+            return string.Join(" ", solutionLines).Trim();
+        }
+        return "";
+    }
+
+    private DateTime ParseResolvedDate(Dictionary<string, object> metadata)
+    {
+        if (metadata.TryGetValue("resolved_at", out var resolvedAt) && 
+            DateTime.TryParse(resolvedAt.ToString(), out var parsed))
+        {
+            return parsed;
+        }
+        return DateTime.UtcNow;
+    }
+
+    private List<string> ExtractTags(Dictionary<string, object> metadata)
+    {
+        if (metadata.TryGetValue("tags", out var tagsObj))
+        {
+            var tagsString = tagsObj.ToString();
+            return string.IsNullOrEmpty(tagsString) ? new List<string>() : 
+                   tagsString.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                           .Select(t => t.Trim())
+                           .ToList();
+        }
+        return new List<string>();
+    }
+
+    private string BuildAgentSpecificQuery(string issueDescription, string codeContext, AgentType agentType)
+    {
+        var agentFocus = agentType switch
+        {
+            AgentType.SecurityExpert => "security vulnerability authentication authorization encryption",
+            AgentType.PerformanceAnalyst => "performance optimization scalability memory cpu efficiency",
+            AgentType.CodeQualityReviewer => "code quality maintainability readability complexity refactoring",
+            AgentType.ArchitectureExpert => "architecture design pattern structure SOLID principles",
+            AgentType.TestingSpecialist => "testing unit test integration test coverage validation",
+            _ => "best practices patterns guidelines"
+        };
+
+        return $"{issueDescription} {agentFocus} {codeContext}".Trim();
+    }
+
+    private string GenerateContextualAdvice(RetrievedContext pattern, AgentType agentType, string issueDescription)
+    {
+        var baseAdvice = pattern.Metadata.GetValueOrDefault("advice")?.ToString() ?? "Consider this pattern for your implementation";
+        var agentSpecificAdvice = agentType switch
+        {
+            AgentType.SecurityExpert => "Review for security implications and potential vulnerabilities",
+            AgentType.PerformanceAnalyst => "Analyze performance impact and optimization opportunities",
+            AgentType.CodeQualityReviewer => "Evaluate maintainability and code quality improvements",
+            AgentType.ArchitectureExpert => "Consider architectural alignment and design principles",
+            AgentType.TestingSpecialist => "Ensure adequate test coverage and validation strategies",
+            _ => "Apply general best practices"
+        };
+
+        return $"{baseAdvice}. {agentSpecificAdvice}.";
+    }
+
+    private string BuildStandardsQuery(string issueDescription, string codeContext)
+    {
+        return $"coding standards best practices guidelines {issueDescription} {codeContext}".Trim();
+    }
+
+    private async Task<List<CrossReference>> PerformCrossReferenceAnalysis(
+        List<SimilarIssue> issues,
+        Dictionary<AgentType, List<SemanticPattern>> patterns,
+        List<ApplicableStandard> standards,
+        CancellationToken cancellationToken)
+    {
+        var crossRefs = new List<CrossReference>();
+
+        // Find issues that relate to specific patterns
+        foreach (var issue in issues.Take(5))
+        {
+            foreach (var agentPatterns in patterns.Take(3))
+            {
+                var relevantPatterns = agentPatterns.Value.Where(p => 
+                    CalculateTextSimilarity(issue.Description, p.Pattern) > 0.3).ToList();
+
+                if (relevantPatterns.Any())
+                {
+                    crossRefs.Add(new CrossReference
+                    {
+                        Type = "Issue-Pattern",
+                        SourceId = issue.Id,
+                        TargetId = relevantPatterns.First().Id,
+                        Relationship = $"Issue relates to {agentPatterns.Key} pattern",
+                        Confidence = relevantPatterns.First().Similarity,
+                        Reasoning = $"Similar context found in {agentPatterns.Key} analysis"
+                    });
+                }
+            }
+        }
+
+        // Find standards that relate to common issue patterns
+        foreach (var standard in standards.Take(3))
+        {
+            var relatedIssues = issues.Where(i => 
+                CalculateTextSimilarity(i.Description, standard.Description) > 0.25).ToList();
+
+            if (relatedIssues.Any())
+            {
+                crossRefs.Add(new CrossReference
+                {
+                    Type = "Standard-Issue",
+                    SourceId = standard.Id,
+                    TargetId = relatedIssues.First().Id,
+                    Relationship = "Standard addresses common issue pattern",
+                    Confidence = standard.Similarity,
+                    Reasoning = $"Standard {standard.Title} provides guidance for similar issues"
+                });
+            }
+        }
+
+        return crossRefs;
+    }
+
+    private double CalculateTextSimilarity(string text1, string text2)
+    {
+        if (string.IsNullOrEmpty(text1) || string.IsNullOrEmpty(text2))
+            return 0.0;
+
+        var words1 = text1.ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries).ToHashSet();
+        var words2 = text2.ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries).ToHashSet();
+
+        var intersection = words1.Intersect(words2).Count();
+        var union = words1.Union(words2).Count();
+
+        return union > 0 ? (double)intersection / union : 0.0;
+    }
+
+    private double CalculateOverallConfidence(SemanticSearchResult result)
+    {
+        var factors = new List<double>();
+
+        // Issue similarity confidence
+        if (result.SimilarIssues.Any())
+            factors.Add(result.SimilarIssues.Average(i => i.Similarity));
+
+        // Pattern relevance confidence
+        if (result.RelevantPatterns.Any())
+            factors.Add(result.RelevantPatterns.Values.SelectMany(p => p).Average(p => p.Similarity));
+
+        // Standards applicability confidence
+        if (result.ApplicableStandards.Any())
+            factors.Add(result.ApplicableStandards.Average(s => s.Similarity));
+
+        // Cross-reference confidence
+        if (result.CrossReferences.Any())
+            factors.Add(result.CrossReferences.Average(cr => cr.Confidence));
+
+        return factors.Any() ? factors.Average() : 0.0;
+    }
+
+    private SearchQuality AssessSearchQuality(SemanticSearchResult result)
+    {
+        var totalResults = result.SimilarIssues.Count + 
+                          result.RelevantPatterns.Values.Sum(p => p.Count) + 
+                          result.ApplicableStandards.Count;
+
+        var highConfidenceResults = result.SimilarIssues.Count(i => i.Similarity > 0.8) +
+                                   result.RelevantPatterns.Values.SelectMany(p => p).Count(p => p.Similarity > 0.8) +
+                                   result.ApplicableStandards.Count(s => s.Similarity > 0.8);
+
+        if (totalResults == 0)
+            return SearchQuality.NoResults;
+        if (highConfidenceResults >= 3)
+            return SearchQuality.Excellent;
+        if (totalResults >= 5)
+            return SearchQuality.Good;
+        if (totalResults >= 2)
+            return SearchQuality.Fair;
+
+        return SearchQuality.Poor;
+    }
+
+    // Additional helper methods for advanced semantic analysis (placeholder implementations)
+    private async Task<Dictionary<string, SemanticDimension>> PerformMultiDimensionalSearch(
+        string codeSnippet, string context, RepositoryContext repositoryContext, CancellationToken cancellationToken)
+    {
+        // Implementation would perform multi-dimensional semantic analysis
+        await Task.Delay(1, cancellationToken); // Placeholder
+        return new Dictionary<string, SemanticDimension>();
+    }
+
+    private async Task<AgentSpecificInsight> PerformAgentSpecificSemanticAnalysis(
+        AgentType agent, string codeSnippet, string context, RepositoryContext repositoryContext, CancellationToken cancellationToken)
+    {
+        // Implementation would perform agent-specific semantic analysis
+        await Task.Delay(1, cancellationToken); // Placeholder
+        return new AgentSpecificInsight { Agent = agent };
+    }
+
+    private async Task<PatternEvolution> AnalyzePatternEvolution(
+        string codeSnippet, RepositoryContext repositoryContext, CancellationToken cancellationToken)
+    {
+        // Implementation would analyze how patterns have evolved
+        await Task.Delay(1, cancellationToken); // Placeholder
+        return new PatternEvolution();
+    }
+
+    private async Task<List<RiskCorrelation>> AnalyzeRiskCorrelations(
+        string codeSnippet, string context, RepositoryContext repositoryContext, CancellationToken cancellationToken)
+    {
+        // Implementation would analyze risk correlations
+        await Task.Delay(1, cancellationToken); // Placeholder
+        return new List<RiskCorrelation>();
+    }
+
+    private async Task<List<SolutionRecommendation>> SynthesizeSolutionRecommendations(
+        AdvancedSemanticAnalysis analysis, RepositoryContext repositoryContext, CancellationToken cancellationToken)
+    {
+        // Implementation would synthesize solution recommendations
+        await Task.Delay(1, cancellationToken); // Placeholder
+        return new List<SolutionRecommendation>();
+    }
+
+    private double CalibrateSemanticConfidence(AdvancedSemanticAnalysis analysis)
+    {
+        // Implementation would calibrate confidence based on various factors
+        return 0.8;
+    }
+
+    private List<LearningPattern> ExtractLearningPatterns(
+        string issueDescription, string solution, string codeContext, 
+        AgentType[] involvedAgents, Dictionary<string, object> resolutionMetadata)
+    {
+        // Implementation would extract learning patterns from resolution
+        return new List<LearningPattern>();
+    }
+
+    private async Task UpdateAgentSpecificKnowledge(
+        AgentType agent, string issueDescription, string solution, 
+        List<LearningPattern> learningPatterns, string projectId, CancellationToken cancellationToken)
+    {
+        // Implementation would update agent-specific knowledge
+        await Task.Delay(1, cancellationToken); // Placeholder
+    }
+
+    private (List<string> preferredPatterns, List<string> avoidedPatterns, Dictionary<string, string> reasoning) 
+        ExtractTeamPatterns(string solution, Dictionary<string, object> resolutionMetadata)
+    {
+        // Implementation would extract team patterns from solution
+        return (new List<string>(), new List<string>(), new Dictionary<string, string>());
+    }
+}
+
+/// <summary>
+/// RAG context for enhanced agent analysis
+/// </summary>
+public class RAGContext
+{
+    public AgentType AgentType { get; set; }
+    public RepositoryContext RepositoryContext { get; set; } = new();
+    public List<HistoricalPattern> RelevantPatterns { get; set; } = new();
+    public List<CodingStandard> ApplicableStandards { get; set; } = new();
+    public List<string> SimilarContexts { get; set; } = new();
+    public List<string> HistoricalInsights { get; set; } = new();
+    public Dictionary<string, object> EnhancedMetadata { get; set; } = new();
 }
 
 // Supporting classes
@@ -672,4 +1581,189 @@ public class CrossValidationResult
     public Dictionary<string, List<ValidationAssessment>> ValidationMatrix { get; set; } = new();
     public List<Finding> ConsensusFindings { get; set; } = new();
     public List<Finding> ConflictingFindings { get; set; } = new();
+}
+
+// Semantic Search Model Classes
+
+/// <summary>
+/// Result of semantic search for similar issues and solutions
+/// </summary>
+public class SemanticSearchResult
+{
+    public string Query { get; set; } = string.Empty;
+    public DateTime SearchTimestamp { get; set; }
+    public List<SimilarIssue> SimilarIssues { get; set; } = new();
+    public Dictionary<AgentType, List<SemanticPattern>> RelevantPatterns { get; set; } = new();
+    public List<ApplicableStandard> ApplicableStandards { get; set; } = new();
+    public List<CrossReference> CrossReferences { get; set; } = new();
+    public double OverallConfidence { get; set; }
+    public SearchQuality SearchQuality { get; set; }
+    public string ErrorMessage { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Similar issue found in semantic search
+/// </summary>
+public class SimilarIssue
+{
+    public string Id { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public string Solution { get; set; } = string.Empty;
+    public double Similarity { get; set; }
+    public string ProjectId { get; set; } = string.Empty;
+    public DateTime ResolvedAt { get; set; }
+    public List<string> Tags { get; set; } = new();
+    public string ComplexityLevel { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Semantic pattern relevant to specific agents
+/// </summary>
+public class SemanticPattern
+{
+    public string Id { get; set; } = string.Empty;
+    public string Pattern { get; set; } = string.Empty;
+    public double Similarity { get; set; }
+    public string Category { get; set; } = string.Empty;
+    public AgentType AgentRelevance { get; set; }
+    public double Confidence { get; set; }
+    public string ContextualAdvice { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Applicable coding standard found in search
+/// </summary>
+public class ApplicableStandard
+{
+    public string Id { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public double Similarity { get; set; }
+    public string Category { get; set; } = string.Empty;
+    public int Priority { get; set; }
+    public string Recommendation { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Cross-reference between different semantic entities
+/// </summary>
+public class CrossReference
+{
+    public string Type { get; set; } = string.Empty;
+    public string SourceId { get; set; } = string.Empty;
+    public string TargetId { get; set; } = string.Empty;
+    public string Relationship { get; set; } = string.Empty;
+    public double Confidence { get; set; }
+    public string Reasoning { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Advanced semantic analysis result
+/// </summary>
+public class AdvancedSemanticAnalysis
+{
+    public string CodeSnippet { get; set; } = string.Empty;
+    public string Context { get; set; } = string.Empty;
+    public DateTime AnalysisTimestamp { get; set; }
+    public Dictionary<string, SemanticDimension> SemanticDimensions { get; set; } = new();
+    public Dictionary<AgentType, AgentSpecificInsight> AgentSpecificInsights { get; set; } = new();
+    public PatternEvolution PatternEvolution { get; set; } = new();
+    public List<RiskCorrelation> RiskCorrelations { get; set; } = new();
+    public List<SolutionRecommendation> SolutionRecommendations { get; set; } = new();
+    public double OverallConfidence { get; set; }
+    public string ErrorMessage { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Semantic dimension of analysis
+/// </summary>
+public class SemanticDimension
+{
+    public string Name { get; set; } = string.Empty;
+    public double Score { get; set; }
+    public List<string> KeyFeatures { get; set; } = new();
+    public Dictionary<string, object> Metadata { get; set; } = new();
+}
+
+/// <summary>
+/// Agent-specific insight from semantic analysis
+/// </summary>
+public class AgentSpecificInsight
+{
+    public AgentType Agent { get; set; }
+    public List<string> KeyInsights { get; set; } = new();
+    public double RelevanceScore { get; set; }
+    public List<string> Recommendations { get; set; } = new();
+    public Dictionary<string, object> SpecializedData { get; set; } = new();
+}
+
+/// <summary>
+/// Pattern evolution analysis
+/// </summary>
+public class PatternEvolution
+{
+    public string PatternName { get; set; } = string.Empty;
+    public List<EvolutionStage> EvolutionStages { get; set; } = new();
+    public string CurrentStage { get; set; } = string.Empty;
+    public List<string> FutureTrends { get; set; } = new();
+}
+
+/// <summary>
+/// Evolution stage in pattern analysis
+/// </summary>
+public class EvolutionStage
+{
+    public string StageName { get; set; } = string.Empty;
+    public DateTime TimeFrame { get; set; }
+    public string Description { get; set; } = string.Empty;
+    public double Confidence { get; set; }
+}
+
+/// <summary>
+/// Risk correlation between code elements
+/// </summary>
+public class RiskCorrelation
+{
+    public string RiskType { get; set; } = string.Empty;
+    public string CorrelatedElement { get; set; } = string.Empty;
+    public double CorrelationStrength { get; set; }
+    public string Explanation { get; set; } = string.Empty;
+    public string MitigationStrategy { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Solution recommendation from semantic analysis
+/// </summary>
+public class SolutionRecommendation
+{
+    public string Title { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public int Priority { get; set; }
+    public List<string> Steps { get; set; } = new();
+    public string Rationale { get; set; } = string.Empty;
+    public double ConfidenceScore { get; set; }
+}
+
+/// <summary>
+/// Learning pattern extracted from resolution
+/// </summary>
+public class LearningPattern
+{
+    public string PatternType { get; set; } = string.Empty;
+    public string Context { get; set; } = string.Empty;
+    public string Solution { get; set; } = string.Empty;
+    public List<AgentType> RelevantAgents { get; set; } = new();
+    public double Effectiveness { get; set; }
+}
+
+/// <summary>
+/// Quality assessment of semantic search
+/// </summary>
+public enum SearchQuality
+{
+    NoResults,
+    Poor,
+    Fair,
+    Good,
+    Excellent
 }

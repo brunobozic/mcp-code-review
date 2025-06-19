@@ -34,17 +34,17 @@ public class ConsolidatedAIReviewSystem : IAIReviewService
     public ConsolidatedAIReviewSystem(
         IAIServiceProvider aiServiceProvider,
         IAgentOrchestrator agentOrchestrator,
+        NestedChatFramework nestedChatFramework,
+        DynamicAgentSelector dynamicAgentSelector,
+        EnhancedConversationManager conversationManager,
         ILogger<ConsolidatedAIReviewSystem> logger)
     {
         _claudeService = aiServiceProvider ?? throw new ArgumentNullException(nameof(aiServiceProvider));
         _agentOrchestrator = agentOrchestrator ?? throw new ArgumentNullException(nameof(agentOrchestrator));
+        _nestedChatFramework = nestedChatFramework ?? throw new ArgumentNullException(nameof(nestedChatFramework));
+        _dynamicAgentSelector = dynamicAgentSelector ?? throw new ArgumentNullException(nameof(dynamicAgentSelector));
+        _conversationManager = conversationManager ?? throw new ArgumentNullException(nameof(conversationManager));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        
-        // Initialize enhanced frameworks
-        var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
-        _nestedChatFramework = new NestedChatFramework(aiServiceProvider, loggerFactory.CreateLogger<NestedChatFramework>());
-        _dynamicAgentSelector = new DynamicAgentSelector(loggerFactory.CreateLogger<DynamicAgentSelector>());
-        _conversationManager = new EnhancedConversationManager(aiServiceProvider, loggerFactory.CreateLogger<EnhancedConversationManager>());
         
         _agentRegistry = new ConcurrentDictionary<AgentType, ISpecializedAgent>();
         _conversationHistory = new List<(string, string)>();

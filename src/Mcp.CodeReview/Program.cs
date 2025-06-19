@@ -5,7 +5,6 @@ using Mcp.CodeReview.Infrastructure;
 using Mcp.CodeReview.Metrics;
 using Mcp.CodeReview.Services;
 using Mcp.CodeReview.GitLab;
-using Mcp.CodeReview.AI.Enhanced2025.TreeOfThoughts;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.AspNetCore.Builder;
@@ -69,24 +68,28 @@ rootCommand.SetHandler(async (bool enableHttp, int port, int metricsPort) =>
                 provider.GetRequiredService<AIServiceManager>());
 
             // Keep backward compatibility with existing IClaudeService
-            builder.Services.AddScoped<IClaudeService, RefactoredClaudeService>();
+            builder.Services.AddScoped<IClaudeService, ClaudeService>();
 
             // Configure AI services with proper dependency injection
             builder.Services.AddScoped<ArchitectureStandardsAgent>();
             
             // Configure standard multi-agent system
             builder.Services.AddScoped<IAgentOrchestrator, AgentOrchestrator>();
+            
+            // Configure enhanced frameworks needed by ConsolidatedAIReviewSystem
+            builder.Services.AddScoped<NestedChatFramework>();
+            builder.Services.AddScoped<DynamicAgentSelector>();
+            builder.Services.AddScoped<EnhancedConversationManager>();
+            
+            // Configure consolidated AI review system
             builder.Services.AddScoped<IAIReviewService, ConsolidatedAIReviewSystem>();
             
-            // Configure Enhanced 2025 Multi-Agent System (Simplified)
-            Log.Information("🚀 Configuring Enhanced 2025 Multi-Agent System (Basic Implementation)");
+            // Configure RAG services
+            Log.Information("🚀 Configuring RAG and Vector Search System");
             
             // Core services
             builder.Services.AddHttpClient<ChromaDbService>();
             builder.Services.AddScoped<ChromaDbService>();
-            
-            // Enhanced 2025 TreeOfThoughts Engine
-            builder.Services.AddScoped<TreeOfThoughtsEngine>();
             
             Log.Information("✅ Enhanced 2025 Multi-Agent System configured and ready");
 
@@ -163,7 +166,7 @@ rootCommand.SetHandler(async (bool enableHttp, int port, int metricsPort) =>
             builder.Services.AddSingleton<GitLabService>();
 
             // Configure Claude service
-            builder.Services.AddScoped<IClaudeService, RefactoredClaudeService>();
+            builder.Services.AddScoped<IClaudeService, ClaudeService>();
 
             // Configure AI services with proper dependency injection
             builder.Services.AddScoped<ArchitectureStandardsAgent>();

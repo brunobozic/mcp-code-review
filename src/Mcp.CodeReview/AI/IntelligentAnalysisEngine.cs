@@ -24,7 +24,7 @@ public class IntelligentAnalysisEngine
     {
         var prompt = BuildSecurityAnalysisPrompt(code, language, dependencies);
         
-        var analysis = await _claudeService.GenerateReview(prompt);
+        var analysis = await _claudeService.GenerateReviewAsync(prompt);
         
         return new SecurityAnalysisResult
         {
@@ -102,7 +102,7 @@ Include both positive and negative test cases.
 Consider boundary conditions and error states.
 ";
 
-        var suggestions = await _claudeService.GenerateReview(prompt);
+        var suggestions = await _claudeService.GenerateReviewAsync(prompt);
         
         return new TestSuggestions
         {
@@ -140,7 +140,7 @@ Provide specific code examples and suggested refactoring.
 Focus on actionable improvements with business impact.
 ";
 
-        var analysis = await _claudeService.GenerateReview(prompt);
+        var analysis = await _claudeService.GenerateReviewAsync(prompt);
         
         return new CodePatternAnalysis
         {
@@ -178,7 +178,7 @@ Suggest:
 Focus on measurable performance improvements.
 ";
 
-        var strategy = await _claudeService.GenerateReview(prompt);
+        var strategy = await _claudeService.GenerateReviewAsync(prompt);
         
         return new CachingStrategy
         {
@@ -214,7 +214,7 @@ Predict:
 Provide reasoning for each prediction.
 ";
 
-        var prediction = await _claudeService.GenerateReview(prompt);
+        var prediction = await _claudeService.GenerateReviewAsync(prompt);
         
         return new QualityPrediction
         {
@@ -266,7 +266,7 @@ Suggest:
 Prioritize functionality preservation and code quality.
 ";
 
-        var resolution = await _claudeService.GenerateReview(prompt);
+        var resolution = await _claudeService.GenerateReviewAsync(prompt);
         
         return new ConflictResolution
         {

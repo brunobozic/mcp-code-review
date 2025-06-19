@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Mcp.CodeReview.Models;
 
 namespace Mcp.CodeReview.RAG
 {
@@ -231,6 +232,298 @@ namespace Mcp.CodeReview.RAG
         }
 
         /// <summary>
+        /// Dynamically seeds the knowledge base with discovered patterns from repository analysis
+        /// </summary>
+        public async Task SeedKnowledgeBaseAsync(
+            string projectId,
+            List<CodePattern> discoveredPatterns,
+            List<CodingStandard> projectStandards,
+            Dictionary<string, object> architectureInsights,
+            CancellationToken cancellationToken = default)
+        {
+            _logger.LogInformation("Seeding knowledge base for project {ProjectId} with {PatternCount} patterns and {StandardCount} standards", 
+                projectId, discoveredPatterns.Count, projectStandards.Count);
+
+            try
+            {
+                // 1. Store discovered code patterns
+                await SeedCodePatternsAsync(projectId, discoveredPatterns, cancellationToken);
+                
+                // 2. Store project-specific coding standards
+                await SeedCodingStandardsAsync(projectId, projectStandards, cancellationToken);
+                
+                // 3. Store architecture insights
+                await SeedArchitectureInsightsAsync(projectId, architectureInsights, cancellationToken);
+                
+                _logger.LogInformation("Knowledge base seeding completed for project {ProjectId}", projectId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to seed knowledge base for project {ProjectId}", projectId);
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Seeds code patterns discovered during repository analysis
+        /// </summary>
+        private async Task SeedCodePatternsAsync(
+            string projectId,
+            List<CodePattern> patterns,
+            CancellationToken cancellationToken)
+        {
+            foreach (var pattern in patterns.Take(20)) // Limit to prevent overwhelming the DB
+            {
+                var document = new RAGDocument
+                {
+                    Id = $"pattern_{projectId}_{pattern.Id}",
+                    Content = $"Pattern: {pattern.Name}\n\nDescription: {pattern.Pattern}\n\nContext: {pattern.Context}\n\nRecommendation: {pattern.Recommendation}",
+                    Collection = CodePatternsCollection,
+                    Metadata = new Dictionary<string, object>
+                    {
+                        ["project_id"] = projectId,
+                        ["pattern_type"] = "discovered",
+                        ["pattern_name"] = pattern.Name,
+                        ["confidence"] = pattern.Confidence,
+                        ["impact"] = pattern.Impact,
+                        ["discovered_at"] = DateTime.UtcNow.ToString("O"),
+                        ["category"] = DeterminePatternCategory(pattern.Name, pattern.Pattern)
+                    }
+                };
+
+                await StoreDocumentAsync(document, cancellationToken);
+            }
+
+            _logger.LogDebug("Seeded {Count} code patterns for project {ProjectId}", patterns.Count, projectId);
+        }
+
+        /// <summary>
+        /// Seeds coding standards specific to the project
+        /// </summary>
+        private async Task SeedCodingStandardsAsync(
+            string projectId,
+            List<CodingStandard> standards,
+            CancellationToken cancellationToken)
+        {
+            foreach (var standard in standards.Take(15)) // Limit to most relevant standards
+            {
+                var document = new RAGDocument
+                {
+                    Id = $"standard_{projectId}_{standard.Id}",
+                    Content = $"Standard: {standard.Title}\n\nDescription: {standard.Description}\n\nLanguage: {standard.Language}\n\nApplicability: {standard.Applicability}\n\nRationale: {standard.Rationale}",
+                    Collection = CodingStandardsCollection,
+                    Metadata = new Dictionary<string, object>
+                    {
+                        ["project_id"] = projectId,
+                        ["title"] = standard.Title,
+                        ["language"] = standard.Language,
+                        ["category"] = standard.Category,
+                        ["priority"] = standard.Priority,
+                        ["applicability"] = standard.Applicability,
+                        ["discovered_at"] = DateTime.UtcNow.ToString("O"),
+                        ["examples"] = string.Join("; ", standard.Examples.Take(3))
+                    }
+                };
+
+                await StoreDocumentAsync(document, cancellationToken);
+            }
+
+            _logger.LogDebug("Seeded {Count} coding standards for project {ProjectId}", standards.Count, projectId);
+        }
+
+        /// <summary>
+        /// Seeds architecture insights and decisions
+        /// </summary>
+        private async Task SeedArchitectureInsightsAsync(
+            string projectId,
+            Dictionary<string, object> insights,
+            CancellationToken cancellationToken)
+        {
+            foreach (var insight in insights.Take(10))
+            {
+                var insightId = Guid.NewGuid().ToString();
+                var content = JsonSerializer.Serialize(insight.Value, new JsonSerializerOptions { WriteIndented = true });
+                
+                var document = new RAGDocument
+                {
+                    Id = $"insight_{projectId}_{insightId}",
+                    Content = $"Architecture Insight: {insight.Key}\n\nDetails: {content}",
+                    Collection = CodePatternsCollection, // Store with code patterns for architectural context
+                    Metadata = new Dictionary<string, object>
+                    {
+                        ["project_id"] = projectId,
+                        ["insight_type"] = "architecture",
+                        ["insight_key"] = insight.Key,
+                        ["discovered_at"] = DateTime.UtcNow.ToString("O"),
+                        ["category"] = "Architecture"
+                    }
+                };
+
+                await StoreDocumentAsync(document, cancellationToken);
+            }
+
+            _logger.LogDebug("Seeded {Count} architecture insights for project {ProjectId}", insights.Count, projectId);
+        }
+
+        /// <summary>
+        /// Searches for similar issues and their solutions across projects
+        /// </summary>
+        public async Task<List<RetrievedContext>> SearchSimilarIssuesAndSolutionsAsync(
+            string issueDescription,
+            string errorMessage = null,
+            string codeContext = null,
+            int topK = 8,
+            CancellationToken cancellationToken = default)
+        {
+            _logger.LogDebug("Searching for similar issues and solutions");
+
+            try
+            {
+                // Build comprehensive search query
+                var searchQuery = BuildIssueSearchQuery(issueDescription, errorMessage, codeContext);
+                var queryEmbedding = await _embeddingService.GetEmbeddingAsync(searchQuery, cancellationToken);
+                
+                var searchRequest = new ChromaSearchRequest
+                {
+                    QueryEmbeddings = new[] { queryEmbedding },
+                    NResults = topK,
+                    Include = new[] { "metadatas", "documents", "distances" }
+                };
+
+                // Search across multiple collections for comprehensive results
+                var historicalResults = await SearchCollectionAsync(HistoricalIssuesCollection, searchRequest, cancellationToken);
+                var patternResults = await SearchCollectionAsync(CodePatternsCollection, 
+                    new ChromaSearchRequest
+                    {
+                        QueryEmbeddings = new[] { queryEmbedding },
+                        NResults = topK / 2,
+                        Where = new Dictionary<string, object> { ["category"] = "Security" }, // Focus on security patterns
+                        Include = new[] { "metadatas", "documents", "distances" }
+                    }, cancellationToken);
+
+                // Combine and rank results
+                var combinedResults = ConvertToRetrievedContext(historicalResults, "HistoricalIssues")
+                    .Concat(ConvertToRetrievedContext(patternResults, "SecurityPatterns"))
+                    .OrderByDescending(r => r.Similarity)
+                    .Take(topK)
+                    .ToList();
+
+                _logger.LogInformation("Found {Count} similar issues and solutions", combinedResults.Count);
+                return combinedResults;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error searching for similar issues and solutions");
+                return new List<RetrievedContext>();
+            }
+        }
+
+        /// <summary>
+        /// Stores a resolved issue for future reference
+        /// </summary>
+        public async Task StoreResolvedIssueAsync(
+            string projectId,
+            string issueTitle,
+            string issueDescription,
+            string solution,
+            string codeContext,
+            List<string> tags = null,
+            CancellationToken cancellationToken = default)
+        {
+            var issueId = Guid.NewGuid().ToString();
+            
+            var document = new RAGDocument
+            {
+                Id = $"issue_{projectId}_{issueId}",
+                Content = $"Issue: {issueTitle}\n\nDescription: {issueDescription}\n\nSolution: {solution}\n\nCode Context: {codeContext}",
+                Collection = HistoricalIssuesCollection,
+                Metadata = new Dictionary<string, object>
+                {
+                    ["project_id"] = projectId,
+                    ["issue_title"] = issueTitle,
+                    ["solution_type"] = DetermineSolutionType(solution),
+                    ["resolved_at"] = DateTime.UtcNow.ToString("O"),
+                    ["tags"] = string.Join(", ", tags ?? new List<string>()),
+                    ["has_code_context"] = !string.IsNullOrEmpty(codeContext),
+                    ["complexity"] = CalculateIssueComplexity(issueDescription, solution)
+                }
+            };
+
+            await StoreDocumentAsync(document, cancellationToken);
+            _logger.LogInformation("Stored resolved issue {IssueTitle} for project {ProjectId}", issueTitle, projectId);
+        }
+
+        /// <summary>
+        /// Updates team patterns based on recent code review feedback
+        /// </summary>
+        public async Task UpdateTeamPatternsAsync(
+            string projectId,
+            List<string> preferredPatterns,
+            List<string> avoidedPatterns,
+            Dictionary<string, string> patternReasoning,
+            CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                // Store preferred patterns
+                foreach (var pattern in preferredPatterns.Take(10))
+                {
+                    var patternId = Guid.NewGuid().ToString();
+                    var reasoning = patternReasoning.GetValueOrDefault(pattern, "Team preference based on code review feedback");
+                    
+                    var document = new RAGDocument
+                    {
+                        Id = $"team_preferred_{projectId}_{patternId}",
+                        Content = $"Preferred Pattern: {pattern}\n\nReasoning: {reasoning}",
+                        Collection = TeamPatternsCollection,
+                        Metadata = new Dictionary<string, object>
+                        {
+                            ["project_id"] = projectId,
+                            ["type"] = "preferred",
+                            ["pattern"] = pattern,
+                            ["updated_at"] = DateTime.UtcNow.ToString("O"),
+                            ["confidence"] = 0.9
+                        }
+                    };
+
+                    await StoreDocumentAsync(document, cancellationToken);
+                }
+
+                // Store avoided patterns
+                foreach (var pattern in avoidedPatterns.Take(10))
+                {
+                    var patternId = Guid.NewGuid().ToString();
+                    var reasoning = patternReasoning.GetValueOrDefault(pattern, "Pattern to avoid based on code review feedback");
+                    
+                    var document = new RAGDocument
+                    {
+                        Id = $"team_avoided_{projectId}_{patternId}",
+                        Content = $"Avoided Pattern: {pattern}\n\nReasoning: {reasoning}",
+                        Collection = TeamPatternsCollection,
+                        Metadata = new Dictionary<string, object>
+                        {
+                            ["project_id"] = projectId,
+                            ["type"] = "avoided",
+                            ["pattern"] = pattern,
+                            ["updated_at"] = DateTime.UtcNow.ToString("O"),
+                            ["confidence"] = 0.8
+                        }
+                    };
+
+                    await StoreDocumentAsync(document, cancellationToken);
+                }
+
+                _logger.LogInformation("Updated team patterns for project {ProjectId}: {PreferredCount} preferred, {AvoidedCount} avoided", 
+                    projectId, preferredPatterns.Count, avoidedPatterns.Count);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to update team patterns for project {ProjectId}", projectId);
+                throw;
+            }
+        }
+
+        /// <summary>
         /// Initializes collections if they don't exist
         /// </summary>
         public async Task InitializeCollectionsAsync(CancellationToken cancellationToken = default)
@@ -404,6 +697,71 @@ namespace Mcp.CodeReview.RAG
             }
 
             return results.Where(r => r.Similarity > 0.5).OrderByDescending(r => r.Similarity).ToList();
+        }
+
+        // Helper methods for dynamic knowledge base seeding
+
+        private string DeterminePatternCategory(string patternName, string patternContent)
+        {
+            var name = patternName.ToLowerInvariant();
+            var content = patternContent.ToLowerInvariant();
+            
+            if (name.Contains("security") || content.Contains("security") || content.Contains("vulnerability"))
+                return "Security";
+            if (name.Contains("performance") || content.Contains("performance") || content.Contains("optimization"))
+                return "Performance";
+            if (name.Contains("architecture") || content.Contains("architecture") || content.Contains("design pattern"))
+                return "Architecture";
+            if (name.Contains("test") || content.Contains("testing") || content.Contains("unit test"))
+                return "Testing";
+            if (name.Contains("api") || content.Contains("api") || content.Contains("endpoint"))
+                return "API Design";
+            
+            return "General";
+        }
+
+        private string BuildIssueSearchQuery(string issueDescription, string errorMessage, string codeContext)
+        {
+            var queryParts = new List<string> { issueDescription };
+            
+            if (!string.IsNullOrEmpty(errorMessage))
+                queryParts.Add($"error: {errorMessage}");
+            
+            if (!string.IsNullOrEmpty(codeContext))
+                queryParts.Add($"context: {codeContext.Substring(0, Math.Min(codeContext.Length, 200))}");
+            
+            return string.Join(" ", queryParts);
+        }
+
+        private string DetermineSolutionType(string solution)
+        {
+            var solutionLower = solution.ToLowerInvariant();
+            
+            if (solutionLower.Contains("refactor") || solutionLower.Contains("restructure"))
+                return "Refactoring";
+            if (solutionLower.Contains("security") || solutionLower.Contains("vulnerability"))
+                return "Security Fix";
+            if (solutionLower.Contains("performance") || solutionLower.Contains("optimization"))
+                return "Performance";
+            if (solutionLower.Contains("bug") || solutionLower.Contains("fix"))
+                return "Bug Fix";
+            if (solutionLower.Contains("feature") || solutionLower.Contains("enhancement"))
+                return "Feature";
+            
+            return "General";
+        }
+
+        private string CalculateIssueComplexity(string description, string solution)
+        {
+            var totalLength = description.Length + solution.Length;
+            var codeBlocks = description.Split("```").Length + solution.Split("```").Length;
+            
+            if (totalLength > 2000 || codeBlocks > 4)
+                return "High";
+            if (totalLength > 1000 || codeBlocks > 2)
+                return "Medium";
+            
+            return "Low";
         }
     }
 

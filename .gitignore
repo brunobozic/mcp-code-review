@@ -79,3 +79,27 @@ test-server.log
 src/Mcp.CodeReview/logs/
 src/Mcp.CodeReview/bin/
 src/Mcp.CodeReview/obj/
+
+# Docker volumes and persistent data
+volumes/
+gitlab-data/
+postgres-data/
+redis-data/
+chromadb-data/
+
+# Docker Compose overrides
+docker-compose.override.yml
+
+# GitLab specific runtime data
+gitlab-config/.env
+gitlab-config/runtime/
+
+# Certificate files
+*.pem
+*.key
+*.cert
+*.crt
+
+# Local configuration files that may contain secrets
+config.local.*
+settings.local.*

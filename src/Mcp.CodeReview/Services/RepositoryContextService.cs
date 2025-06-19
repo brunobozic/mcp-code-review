@@ -39,14 +39,14 @@ public class RepositoryContextService
     }
 
     /// <summary>
-    /// Build comprehensive repository context including structure, dependencies, and historical patterns
+    /// Build comprehensive repository context including structure, dependencies, and historical patterns with RAG enhancement
     /// </summary>
     public async Task<RepositoryContext> BuildRepositoryContextAsync(
         string projectId, 
         List<string>? changedFiles = null,
         CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Building repository context for project {ProjectId}", projectId);
+        _logger.LogInformation("Building RAG-enhanced repository context for project {ProjectId}", projectId);
         
         var context = new RepositoryContext
         {
@@ -55,33 +55,40 @@ public class RepositoryContextService
 
         try
         {
-            // Get project information
+            // Step 1: Get project information
             await PopulateProjectInfoAsync(context, cancellationToken);
             
-            // Analyze project structure
+            // Step 2: Analyze project structure
             await AnalyzeProjectStructureAsync(context, cancellationToken);
             
-            // Get dependencies
+            // Step 3: Get dependencies
             await AnalyzeDependenciesAsync(context, cancellationToken);
             
-            // Get related files if we have changed files
+            // Step 4: Get related files if we have changed files
             if (changedFiles?.Any() == true)
             {
                 await GetRelatedFilesAsync(context, changedFiles, cancellationToken);
             }
             
-            // Query historical patterns from RAG
-            await GetHistoricalPatternsAsync(context, cancellationToken);
+            // Step 5: RAG-Enhanced Historical Pattern Analysis
+            await GetRAGEnhancedHistoricalPatternsAsync(context, changedFiles, cancellationToken);
             
-            // Get team patterns and coding standards
-            await GetTeamPatternsAsync(context, cancellationToken);
+            // Step 6: RAG-Enhanced Team Patterns and Standards
+            await GetRAGEnhancedTeamPatternsAsync(context, cancellationToken);
             
-            _logger.LogInformation("Repository context built successfully for project {ProjectId}", projectId);
+            // Step 7: Semantic Code Analysis with RAG
+            await PerformSemanticCodeAnalysisAsync(context, changedFiles, cancellationToken);
+            
+            // Step 8: Dynamic Knowledge Base Seeding
+            await SeedKnowledgeBaseFromContextAsync(context, cancellationToken);
+            
+            _logger.LogInformation("RAG-enhanced repository context built successfully for project {ProjectId} with {PatternCount} patterns and {StandardCount} standards", 
+                projectId, context.HistoricalPatterns.Count, context.ProjectStandards.Count);
             return context;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to build repository context for project {ProjectId}", projectId);
+            _logger.LogError(ex, "Failed to build RAG-enhanced repository context for project {ProjectId}", projectId);
             throw;
         }
     }
@@ -413,74 +420,648 @@ public class RepositoryContextService
         }
     }
 
-    private async Task GetHistoricalPatternsAsync(RepositoryContext context, CancellationToken cancellationToken)
+    /// <summary>
+    /// RAG-Enhanced historical pattern analysis with semantic search and context-aware retrieval
+    /// </summary>
+    private async Task GetRAGEnhancedHistoricalPatternsAsync(RepositoryContext context, List<string>? changedFiles, CancellationToken cancellationToken)
     {
+        if (_vectorSearchService == null)
+        {
+            _logger.LogWarning("Vector search service not available for RAG-enhanced historical pattern analysis");
+            return;
+        }
+
         try
         {
-            // Search for similar patterns in historical data
-            var patterns = await _vectorSearchService.SearchSimilarCodeAsync(
-                $"project architecture {context.Structure.ArchitecturePattern}", 
-                context.ProjectId, 
-                topK: 10);
-
-            context.HistoricalPatterns = patterns.Select(p => new HistoricalPattern
+            var historicalPatterns = new List<HistoricalPattern>();
+            
+            // 1. Architecture-specific pattern search
+            var architectureQuery = $"architecture pattern {context.Structure.ArchitecturePattern} best practices common issues";
+            var architecturePatterns = await _vectorSearchService.SearchSimilarCodeAsync(architectureQuery, context.ProjectId, topK: 15);
+            
+            // 2. Technology stack pattern search
+            var techStackQuery = $"technology stack {string.Join(" ", context.Dependencies.Keys.Take(5))} patterns anti-patterns";
+            var techPatterns = await _vectorSearchService.SearchSimilarCodeAsync(techStackQuery, context.ProjectId, topK: 10);
+            
+            // 3. File-specific pattern search for changed files
+            if (changedFiles?.Any() == true)
+            {
+                foreach (var file in changedFiles.Take(3)) // Limit to prevent excessive queries
+                {
+                    var fileExtension = Path.GetExtension(file);
+                    var fileName = Path.GetFileNameWithoutExtension(file);
+                    var fileQuery = $"file type {fileExtension} {fileName} common patterns issues security performance";
+                    
+                    var filePatterns = await _vectorSearchService.SearchSimilarCodeAsync(fileQuery, context.ProjectId, topK: 8);
+                    architecturePatterns.AddRange(filePatterns);
+                }
+            }
+            
+            // 4. Code quality and security pattern search
+            var qualityQuery = $"code quality security vulnerability {context.Structure.ArchitecturePattern} review findings";
+            var qualityPatterns = await _vectorSearchService.SearchSimilarCodeAsync(qualityQuery, context.ProjectId, topK: 12);
+            
+            // 5. Performance pattern search
+            var performanceQuery = $"performance optimization {context.Structure.ArchitecturePattern} bottlenecks scalability";
+            var performancePatterns = await _vectorSearchService.SearchSimilarCodeAsync(performanceQuery, context.ProjectId, topK: 10);
+            
+            // Combine and deduplicate patterns
+            var allPatterns = architecturePatterns
+                .Concat(techPatterns)
+                .Concat(qualityPatterns)
+                .Concat(performancePatterns)
+                .GroupBy(p => p.Id)
+                .Select(g => g.First())
+                .OrderByDescending(p => p.Similarity)
+                .Take(25);
+            
+            // Convert to HistoricalPattern objects with enhanced metadata
+            context.HistoricalPatterns = allPatterns.Select(p => new HistoricalPattern
             {
                 Id = p.Id,
                 Pattern = p.Content,
-                Category = p.Metadata.GetValueOrDefault("category")?.ToString() ?? "",
+                Category = DeterminePatternCategory(p, context),
                 Similarity = p.Similarity,
-                Recommendation = p.Metadata.GetValueOrDefault("recommendation")?.ToString() ?? ""
+                Recommendation = GenerateContextualRecommendation(p, context),
+                Metadata = p.Metadata
             }).ToList();
             
-            _logger.LogInformation("Found {PatternCount} historical patterns for project", patterns.Count);
+            _logger.LogInformation("RAG-enhanced historical pattern analysis found {PatternCount} relevant patterns across {CategoryCount} categories", 
+                context.HistoricalPatterns.Count, 
+                context.HistoricalPatterns.Select(p => p.Category).Distinct().Count());
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Could not retrieve historical patterns for project {ProjectId}", context.ProjectId);
+            _logger.LogWarning(ex, "Could not retrieve RAG-enhanced historical patterns for project {ProjectId}", context.ProjectId);
         }
     }
 
-    private async Task GetTeamPatternsAsync(RepositoryContext context, CancellationToken cancellationToken)
+    /// <summary>
+    /// RAG-Enhanced team patterns and coding standards with semantic understanding
+    /// </summary>
+    private async Task GetRAGEnhancedTeamPatternsAsync(RepositoryContext context, CancellationToken cancellationToken)
     {
+        if (_vectorSearchService == null)
+        {
+            _logger.LogWarning("Vector search service not available for RAG-enhanced team pattern analysis");
+            return;
+        }
+
         try
         {
-            // Get team-specific patterns and coding standards
-            var teamPatterns = await _vectorSearchService.SearchTeamPatternsAsync(
+            // 1. Project-specific team patterns
+            var projectPatterns = await _vectorSearchService.SearchTeamPatternsAsync(
                 context.ProjectId, 
                 context.ProjectId, 
-                topK: 5);
+                topK: 8);
 
-            var codingStandards = await _vectorSearchService.SearchCodingStandardsAsync(
-                "general", 
-                topK: 10);
+            // 2. Architecture-specific coding standards
+            var archStandardsQuery = $"{context.Structure.ArchitecturePattern} coding standards best practices guidelines";
+            var archStandards = await _vectorSearchService.SearchCodingStandardsAsync(archStandardsQuery, topK: 15);
 
+            // 3. Technology-specific standards
+            var mainTechnologies = context.Dependencies.Keys.Take(3);
+            var techStandards = new List<RetrievedContext>();
+            foreach (var tech in mainTechnologies)
+            {
+                var techQuery = $"{tech} coding standards conventions best practices";
+                var standards = await _vectorSearchService.SearchCodingStandardsAsync(techQuery, topK: 5);
+                techStandards.AddRange(standards);
+            }
+
+            // 4. Security and performance standards
+            var securityStandards = await _vectorSearchService.SearchCodingStandardsAsync("security standards OWASP vulnerabilities", topK: 8);
+            var performanceStandards = await _vectorSearchService.SearchCodingStandardsAsync("performance standards optimization scalability", topK: 6);
+
+            // Combine all standards
+            var allStandards = archStandards
+                .Concat(techStandards)
+                .Concat(securityStandards)
+                .Concat(performanceStandards)
+                .GroupBy(s => s.Id)
+                .Select(g => g.First())
+                .OrderByDescending(s => s.Similarity)
+                .ToList();
+
+            // Build team patterns
             context.TeamPatterns = new TeamPatterns
             {
-                PreferredPatterns = teamPatterns
+                PreferredPatterns = projectPatterns
                     .Where(p => p.Metadata.GetValueOrDefault("type")?.ToString() == "preferred")
                     .Select(p => p.Content)
                     .ToList(),
-                AvoidedPatterns = teamPatterns
+                AvoidedPatterns = projectPatterns
                     .Where(p => p.Metadata.GetValueOrDefault("type")?.ToString() == "avoided")
                     .Select(p => p.Content)
-                    .ToList()
+                    .ToList(),
+                EmergingPatterns = IdentifyEmergingPatterns(context, allStandards),
+                ContextualGuidelines = GenerateContextualGuidelines(context, allStandards)
             };
 
-            context.ProjectStandards = codingStandards.Select(cs => new CodingStandard
+            // Build enhanced coding standards
+            context.ProjectStandards = allStandards.Select(cs => new CodingStandard
             {
                 Id = cs.Id,
-                Title = cs.Metadata.GetValueOrDefault("title")?.ToString() ?? "",
+                Title = cs.Metadata.GetValueOrDefault("title")?.ToString() ?? ExtractTitle(cs.Content),
                 Description = cs.Content,
-                Language = cs.Metadata.GetValueOrDefault("language")?.ToString() ?? "",
-                Category = cs.Metadata.GetValueOrDefault("category")?.ToString() ?? "",
-                Priority = int.TryParse(cs.Metadata.GetValueOrDefault("priority")?.ToString(), out var p) ? p : 1
+                Language = DetermineLanguage(cs, context),
+                Category = cs.Metadata.GetValueOrDefault("category")?.ToString() ?? CategorizeStandard(cs.Content),
+                Priority = CalculatePriority(cs, context),
+                Applicability = DetermineApplicability(cs, context),
+                Examples = ExtractExamples(cs.Content),
+                Rationale = cs.Metadata.GetValueOrDefault("rationale")?.ToString() ?? ""
             }).ToList();
             
-            _logger.LogInformation("Retrieved team patterns and coding standards for project");
+            _logger.LogInformation("RAG-enhanced team pattern analysis found {PreferredCount} preferred patterns, {AvoidedCount} anti-patterns, and {StandardsCount} coding standards", 
+                context.TeamPatterns.PreferredPatterns.Count,
+                context.TeamPatterns.AvoidedPatterns.Count,
+                context.ProjectStandards.Count);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Could not retrieve team patterns for project {ProjectId}", context.ProjectId);
+            _logger.LogWarning(ex, "Could not retrieve RAG-enhanced team patterns for project {ProjectId}", context.ProjectId);
         }
+    }
+
+    /// <summary>
+    /// Perform semantic code analysis to understand code patterns and relationships
+    /// </summary>
+    private async Task PerformSemanticCodeAnalysisAsync(RepositoryContext context, List<string>? changedFiles, CancellationToken cancellationToken)
+    {
+        if (_vectorSearchService == null) return;
+
+        try
+        {
+            var semanticInsights = new Dictionary<string, object>();
+
+            // 1. Analyze code complexity and patterns
+            if (changedFiles?.Any() == true)
+            {
+                foreach (var file in changedFiles.Take(3))
+                {
+                    var fileContent = context.RelatedFiles.GetValueOrDefault(file, "");
+                    if (!string.IsNullOrEmpty(fileContent))
+                    {
+                        // Search for similar code patterns
+                        var similarCodeQuery = $"similar code patterns {Path.GetExtension(file)} {context.Structure.ArchitecturePattern}";
+                        var similarPatterns = await _vectorSearchService.SearchSimilarCodeAsync(similarCodeQuery, context.ProjectId, topK: 5);
+                        
+                        semanticInsights[file] = new
+                        {
+                            SimilarPatterns = similarPatterns.Count,
+                            ComplexityIndicators = AnalyzeComplexity(fileContent),
+                            ArchitecturalRole = DetermineArchitecturalRole(file, context),
+                            RiskFactors = IdentifyRiskFactors(fileContent, similarPatterns)
+                        };
+                    }
+                }
+            }
+
+            // 2. Cross-reference analysis
+            semanticInsights["cross_references"] = AnalyzeCrossReferences(context);
+            
+            // 3. Dependency risk analysis
+            semanticInsights["dependency_risks"] = await AnalyzeDependencyRisks(context, cancellationToken);
+
+            context.SemanticAnalysis = semanticInsights;
+            
+            _logger.LogInformation("Semantic code analysis completed for {FileCount} files with {InsightCount} insights", 
+                changedFiles?.Count ?? 0, semanticInsights.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not perform semantic code analysis for project {ProjectId}", context.ProjectId);
+        }
+    }
+
+    /// <summary>
+    /// Dynamically seed knowledge base with discovered patterns and insights
+    /// </summary>
+    private async Task SeedKnowledgeBaseFromContextAsync(RepositoryContext context, CancellationToken cancellationToken)
+    {
+        if (_vectorSearchService == null) return;
+
+        try
+        {
+            // 1. Extract new patterns from current analysis
+            var newPatterns = ExtractDiscoveredPatterns(context);
+            
+            // 2. Build comprehensive architecture insights
+            var architectureInsights = BuildArchitectureInsights(context);
+            
+            // 3. Use the new dynamic seeding functionality
+            await _vectorSearchService.SeedKnowledgeBaseAsync(
+                context.ProjectId,
+                newPatterns,
+                context.ProjectStandards,
+                architectureInsights,
+                cancellationToken);
+            
+            _logger.LogInformation("Knowledge base seeded with {PatternCount} new patterns and {StandardCount} standards from project analysis", 
+                newPatterns.Count, context.ProjectStandards.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not seed knowledge base for project {ProjectId}", context.ProjectId);
+        }
+    }
+
+    // Helper methods for RAG-enhanced analysis
+
+    private string DeterminePatternCategory(RetrievedContext pattern, RepositoryContext context)
+    {
+        var content = pattern.Content.ToLowerInvariant();
+        
+        if (content.Contains("security") || content.Contains("vulnerability"))
+            return "Security";
+        if (content.Contains("performance") || content.Contains("optimization"))
+            return "Performance";
+        if (content.Contains("architecture") || content.Contains("design"))
+            return "Architecture";
+        if (content.Contains("quality") || content.Contains("maintainability"))
+            return "Code Quality";
+        
+        return pattern.Metadata.GetValueOrDefault("category")?.ToString() ?? "General";
+    }
+
+    private string GenerateContextualRecommendation(RetrievedContext pattern, RepositoryContext context)
+    {
+        var baseRecommendation = pattern.Metadata.GetValueOrDefault("recommendation")?.ToString() ?? 
+                                "Review this pattern in the context of your current architecture";
+        
+        // Enhance with project-specific context
+        if (context.Structure.ArchitecturePattern == "Microservices")
+            return $"{baseRecommendation} Consider microservice boundaries and distributed system implications.";
+        if (context.Structure.ArchitecturePattern == "MVC")
+            return $"{baseRecommendation} Ensure proper separation of concerns across MVC layers.";
+        
+        return baseRecommendation;
+    }
+
+    private List<string> IdentifyEmergingPatterns(RepositoryContext context, List<RetrievedContext> standards)
+    {
+        // Analyze current codebase trends
+        var emergingPatterns = new List<string>();
+        
+        // Check for modern patterns based on dependencies
+        if (context.Dependencies.ContainsKey("Microsoft.AspNetCore"))
+            emergingPatterns.Add("ASP.NET Core minimal APIs trend");
+        if (context.Dependencies.ContainsKey("Docker"))
+            emergingPatterns.Add("Containerization adoption pattern");
+        
+        return emergingPatterns;
+    }
+
+    private Dictionary<string, string> GenerateContextualGuidelines(RepositoryContext context, List<RetrievedContext> standards)
+    {
+        var guidelines = new Dictionary<string, string>();
+        
+        guidelines[$"{context.Structure.ArchitecturePattern}_naming"] = $"Follow {context.Structure.ArchitecturePattern} naming conventions";
+        guidelines["dependency_management"] = $"Manage {context.Dependencies.Count} dependencies carefully";
+        guidelines["security_focus"] = "Prioritize security in all implementations";
+        
+        return guidelines;
+    }
+
+    private string ExtractTitle(string content)
+    {
+        var lines = content.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        return lines.FirstOrDefault()?.Trim() ?? "Untitled Standard";
+    }
+
+    private string DetermineLanguage(RetrievedContext standard, RepositoryContext context)
+    {
+        var content = standard.Content.ToLowerInvariant();
+        
+        if (content.Contains("c#") || content.Contains("csharp"))
+            return "C#";
+        if (content.Contains("javascript") || content.Contains("typescript"))
+            return "JavaScript/TypeScript";
+        if (content.Contains("python"))
+            return "Python";
+        
+        // Infer from project dependencies
+        if (context.Dependencies.Keys.Any(d => d.Contains("Microsoft")))
+            return "C#";
+        
+        return "General";
+    }
+
+    private string CategorizeStandard(string content)
+    {
+        var lowerContent = content.ToLowerInvariant();
+        
+        if (lowerContent.Contains("security") || lowerContent.Contains("authentication"))
+            return "Security";
+        if (lowerContent.Contains("performance") || lowerContent.Contains("optimization"))
+            return "Performance";
+        if (lowerContent.Contains("testing") || lowerContent.Contains("unit test"))
+            return "Testing";
+        if (lowerContent.Contains("naming") || lowerContent.Contains("convention"))
+            return "Conventions";
+        
+        return "General";
+    }
+
+    private int CalculatePriority(RetrievedContext standard, RepositoryContext context)
+    {
+        // Higher priority for standards that match current architecture/dependencies
+        var priority = 3; // Default medium priority
+        
+        if (standard.Content.Contains(context.Structure.ArchitecturePattern))
+            priority = 1; // High priority
+        
+        if (context.Dependencies.Keys.Any(dep => standard.Content.Contains(dep)))
+            priority = Math.Min(priority, 2); // High-medium priority
+        
+        return priority;
+    }
+
+    private string DetermineApplicability(RetrievedContext standard, RepositoryContext context)
+    {
+        var applicableScenarios = new List<string>();
+        
+        if (standard.Content.Contains(context.Structure.ArchitecturePattern))
+            applicableScenarios.Add($"{context.Structure.ArchitecturePattern} projects");
+        
+        foreach (var dep in context.Dependencies.Keys.Take(3))
+        {
+            if (standard.Content.Contains(dep))
+                applicableScenarios.Add($"Projects using {dep}");
+        }
+        
+        return applicableScenarios.Any() ? string.Join(", ", applicableScenarios) : "General applicability";
+    }
+
+    private List<string> ExtractExamples(string content)
+    {
+        var examples = new List<string>();
+        var lines = content.Split('\n');
+        
+        foreach (var line in lines)
+        {
+            if (line.Trim().StartsWith("//") || line.Trim().StartsWith("/*") || 
+                line.Contains("example") || line.Contains("Example"))
+            {
+                examples.Add(line.Trim());
+            }
+        }
+        
+        return examples.Take(3).ToList();
+    }
+
+    private object AnalyzeComplexity(string fileContent)
+    {
+        var lines = fileContent.Split('\n');
+        var complexity = new
+        {
+            LineCount = lines.Length,
+            MethodCount = lines.Count(l => l.Contains("public") || l.Contains("private")),
+            ConditionalCount = lines.Count(l => l.Contains("if") || l.Contains("switch")),
+            LoopCount = lines.Count(l => l.Contains("for") || l.Contains("while")),
+            ComplexityScore = CalculateComplexityScore(lines)
+        };
+        
+        return complexity;
+    }
+
+    private double CalculateComplexityScore(string[] lines)
+    {
+        var score = lines.Length * 0.1; // Base score from line count
+        score += lines.Count(l => l.Contains("if")) * 2; // Conditionals add complexity
+        score += lines.Count(l => l.Contains("for") || l.Contains("while")) * 3; // Loops add more
+        return Math.Min(score, 100); // Cap at 100
+    }
+
+    private string DetermineArchitecturalRole(string filePath, RepositoryContext context)
+    {
+        var fileName = Path.GetFileName(filePath).ToLowerInvariant();
+        var directory = Path.GetDirectoryName(filePath)?.ToLowerInvariant() ?? "";
+        
+        if (directory.Contains("controller") || fileName.Contains("controller"))
+            return "Controller Layer";
+        if (directory.Contains("service") || fileName.Contains("service"))
+            return "Service Layer";
+        if (directory.Contains("model") || fileName.Contains("model"))
+            return "Data Layer";
+        if (directory.Contains("view") || fileName.Contains("view"))
+            return "Presentation Layer";
+        
+        return "Infrastructure";
+    }
+
+    private List<string> IdentifyRiskFactors(string fileContent, List<RetrievedContext> similarPatterns)
+    {
+        var risks = new List<string>();
+        
+        if (fileContent.Contains("password") || fileContent.Contains("secret"))
+            risks.Add("Potential hardcoded credentials");
+        if (fileContent.Contains("eval(") || fileContent.Contains("innerHTML"))
+            risks.Add("Code injection vulnerability");
+        if (fileContent.Length > 10000)
+            risks.Add("Large file size - potential maintenance issues");
+        
+        // Add risks based on similar patterns
+        foreach (var pattern in similarPatterns.Take(3))
+        {
+            if (pattern.Metadata.GetValueOrDefault("risk_level")?.ToString() == "high")
+                risks.Add($"Similar to high-risk pattern: {pattern.Id}");
+        }
+        
+        return risks;
+    }
+
+    private object AnalyzeCrossReferences(RepositoryContext context)
+    {
+        return new
+        {
+            TotalFiles = context.RelatedFiles.Count,
+            Dependencies = context.Dependencies.Count,
+            CrossReferences = context.RelatedFiles.Count * 0.3, // Estimate
+            CouplingScore = CalculateCouplingScore(context)
+        };
+    }
+
+    private double CalculateCouplingScore(RepositoryContext context)
+    {
+        // Simple coupling calculation based on files and dependencies
+        var fileCount = context.Structure.FilesByType.Values.Sum(files => files.Count);
+        var depCount = context.Dependencies.Count;
+        
+        return fileCount > 0 ? (double)depCount / fileCount : 0;
+    }
+
+    private async Task<object> AnalyzeDependencyRisks(RepositoryContext context, CancellationToken cancellationToken)
+    {
+        var risks = new Dictionary<string, string>();
+        
+        foreach (var dependency in context.Dependencies.Take(5))
+        {
+            // Simple risk assessment based on dependency name patterns
+            if (dependency.Key.Contains("beta") || dependency.Key.Contains("alpha"))
+                risks[dependency.Key] = "Pre-release version risk";
+            else if (dependency.Value.Contains("0."))
+                risks[dependency.Key] = "Early version risk";
+            else
+                risks[dependency.Key] = "Low risk";
+        }
+        
+        return new { DependencyRisks = risks, TotalDependencies = context.Dependencies.Count };
+    }
+
+    private List<CodePattern> ExtractDiscoveredPatterns(RepositoryContext context)
+    {
+        var patterns = new List<CodePattern>();
+        
+        // Extract patterns from semantic analysis
+        if (context.SemanticAnalysis.Any())
+        {
+            patterns.Add(new CodePattern
+            {
+                Id = Guid.NewGuid().ToString(),
+                Name = $"{context.Structure.ArchitecturePattern} Implementation Pattern",
+                Pattern = $"Architecture: {context.Structure.ArchitecturePattern}",
+                Context = context.ProjectName,
+                Confidence = 0.8,
+                Impact = "Architectural consistency",
+                Recommendation = "Continue following established architecture patterns"
+            });
+        }
+        
+        return patterns;
+    }
+
+    private Dictionary<string, object> BuildArchitectureInsights(RepositoryContext context)
+    {
+        var insights = new Dictionary<string, object>();
+        
+        // 1. Architecture pattern insights
+        insights["architecture_pattern"] = new
+        {
+            Pattern = context.Structure.ArchitecturePattern,
+            FileDistribution = context.Structure.FilesByType,
+            SourceDirectories = context.Structure.SourceDirectories.Count,
+            TestDirectories = context.Structure.TestDirectories.Count,
+            ConfigurationFiles = context.Structure.ConfigurationFiles.Count
+        };
+        
+        // 2. Dependency insights
+        insights["dependency_analysis"] = new
+        {
+            TotalDependencies = context.Dependencies.Count,
+            MainTechnologies = context.Dependencies.Keys.Take(10).ToList(),
+            DependencyComplexity = CalculateDependencyComplexity(context.Dependencies),
+            SecurityRelevantDeps = context.Dependencies.Keys.Where(d => 
+                d.ToLowerInvariant().Contains("security") || 
+                d.ToLowerInvariant().Contains("auth")).ToList()
+        };
+        
+        // 3. Code complexity insights
+        if (context.SemanticAnalysis.Any())
+        {
+            insights["code_complexity"] = context.SemanticAnalysis;
+        }
+        
+        // 4. Team patterns insights
+        if (context.TeamPatterns != null)
+        {
+            insights["team_patterns"] = new
+            {
+                PreferredPatterns = context.TeamPatterns.PreferredPatterns,
+                AvoidedPatterns = context.TeamPatterns.AvoidedPatterns,
+                EmergingPatterns = context.TeamPatterns.EmergingPatterns,
+                Guidelines = context.TeamPatterns.ContextualGuidelines
+            };
+        }
+        
+        // 5. Quality metrics
+        insights["quality_metrics"] = new
+        {
+            ArchitectureConsistency = CalculateArchitectureConsistency(context),
+            DependencyHealth = CalculateDependencyHealth(context),
+            CodebaseMaturity = CalculateCodebaseMaturity(context),
+            SecurityPosture = CalculateSecurityPosture(context)
+        };
+        
+        return insights;
+    }
+    
+    private double CalculateDependencyComplexity(Dictionary<string, string> dependencies)
+    {
+        // Calculate complexity based on number of dependencies and version patterns
+        var baseScore = Math.Min(dependencies.Count * 0.5, 50);
+        var preReleaseCount = dependencies.Values.Count(v => v.Contains("alpha") || v.Contains("beta"));
+        var complexityBonus = preReleaseCount * 5;
+        
+        return Math.Min(baseScore + complexityBonus, 100);
+    }
+    
+    private double CalculateArchitectureConsistency(RepositoryContext context)
+    {
+        // Simple consistency calculation based on directory structure alignment with architecture pattern
+        var totalFiles = context.Structure.FilesByType.Values.Sum(files => files.Count);
+        var sourceFiles = context.Structure.SourceDirectories.Count;
+        var testFiles = context.Structure.TestDirectories.Count;
+        
+        // Higher score for balanced source/test ratio and organized structure
+        if (totalFiles == 0) return 0;
+        
+        var testCoverage = testFiles > 0 ? Math.Min((double)testFiles / sourceFiles * 100, 100) : 0;
+        var organizationScore = context.Structure.SourceDirectories.Count > 0 ? 75 : 25;
+        
+        return (testCoverage + organizationScore) / 2;
+    }
+    
+    private double CalculateDependencyHealth(RepositoryContext context)
+    {
+        if (!context.Dependencies.Any()) return 100;
+        
+        var healthyDeps = context.Dependencies.Count(d => 
+            !d.Value.Contains("alpha") && 
+            !d.Value.Contains("beta") && 
+            !d.Value.StartsWith("0."));
+        
+        return (double)healthyDeps / context.Dependencies.Count * 100;
+    }
+    
+    private double CalculateCodebaseMaturity(RepositoryContext context)
+    {
+        var maturityScore = 0.0;
+        
+        // Documentation presence
+        if (context.Structure.DocumentationFiles.Any()) maturityScore += 25;
+        
+        // Configuration management
+        if (context.Structure.ConfigurationFiles.Any()) maturityScore += 20;
+        
+        // Test presence
+        if (context.Structure.TestDirectories.Any()) maturityScore += 30;
+        
+        // Architecture pattern usage
+        if (context.Structure.ArchitecturePattern != "Layered") maturityScore += 25; // Bonus for explicit patterns
+        
+        return maturityScore;
+    }
+    
+    private double CalculateSecurityPosture(RepositoryContext context)
+    {
+        var securityScore = 50.0; // Base score
+        
+        // Security-related dependencies
+        var securityDeps = context.Dependencies.Keys.Count(d => 
+            d.ToLowerInvariant().Contains("security") || 
+            d.ToLowerInvariant().Contains("auth") ||
+            d.ToLowerInvariant().Contains("encrypt"));
+        
+        if (securityDeps > 0) securityScore += 25;
+        
+        // Configuration file security (presence of security configs)
+        var securityConfigs = context.Structure.ConfigurationFiles.Count(f => 
+            f.ToLowerInvariant().Contains("security") || 
+            f.ToLowerInvariant().Contains("auth"));
+        
+        if (securityConfigs > 0) securityScore += 25;
+        
+        return Math.Min(securityScore, 100);
     }
 }

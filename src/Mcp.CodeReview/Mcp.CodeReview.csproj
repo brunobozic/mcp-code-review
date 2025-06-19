@@ -37,14 +37,5 @@
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.5.0" />
   </ItemGroup>
 
-  <ItemGroup>
-    <!-- Temporarily exclude complex Enhanced 2025 files until interface issues resolved -->
-    <Compile Remove="AI/2025_Enhanced/**" />
-    <Compile Remove="AI/Agents/SecurityAgent.cs" />
-    <Compile Remove="AI/Agents/PerformanceAgent.cs" />
-    <Compile Remove="AI/Agents/CodeQualityAgent.cs" />
-    <None Include="AI/2025_Enhanced/**" />
-    <Compile Include="AI/2025_Enhanced/TreeOfThoughts/TreeOfThoughtsEngine.cs" />
-  </ItemGroup>
 
 </Project>

@@ -1,0 +1,244 @@
+version: '3.8'
+
+services:
+  # =============================================================================
+  # GitLab PostgreSQL Database
+  # =============================================================================
+  gitlab-postgres:
+    image: postgres:15.5-alpine
+    container_name: gitlab-postgres
+    environment:
+      POSTGRES_DB: gitlabhq_production
+      POSTGRES_USER: gitlab
+      POSTGRES_PASSWORD: SecureGitLabDBPass123!
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    volumes:
+      - gitlab-postgres-data:/var/lib/postgresql/data
+      - ./scripts/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gitlab -d gitlabhq_production"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - gitlab-network
+
+  # =============================================================================
+  # GitLab Redis Cache
+  # =============================================================================
+  gitlab-redis:
+    image: redis:7.2.3-alpine
+    container_name: gitlab-redis
+    command: >
+      redis-server
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --timeout 300
+      --tcp-keepalive 60
+      --loglevel notice
+    volumes:
+      - gitlab-redis-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks:
+      - gitlab-network
+
+  # =============================================================================
+  # GitLab CE - Main Application
+  # =============================================================================
+  gitlab:
+    image: gitlab/gitlab-ce:16.7.2-ce.0
+    container_name: gitlab-ce
+    hostname: gitlab.local
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        # External URL Configuration
+        external_url 'http://localhost:8080'
+        gitlab_rails['gitlab_shell_ssh_port'] = 2222
+        
+        # Initial Root Password (will be changed on first login)
+        gitlab_rails['initial_root_password'] = 'Adm1nP@ssw0rd2025!'
+        gitlab_rails['store_initial_root_password'] = false
+        gitlab_rails['display_initial_root_password'] = true
+        
+        # External Database Configuration
+        gitlab_rails['db_adapter'] = 'postgresql'
+        gitlab_rails['db_encoding'] = 'unicode'
+        gitlab_rails['db_database'] = 'gitlabhq_production'
+        gitlab_rails['db_username'] = 'gitlab'
+        gitlab_rails['db_password'] = 'SecureGitLabDBPass123!'
+        gitlab_rails['db_host'] = 'gitlab-postgres'
+        gitlab_rails['db_port'] = 5432
+        postgresql['enable'] = false
+        
+        # External Redis Configuration
+        gitlab_rails['redis_host'] = 'gitlab-redis'
+        gitlab_rails['redis_port'] = 6379
+        gitlab_rails['redis_database'] = 0
+        redis['enable'] = false
+        
+        # Memory Optimizations for Development
+        puma['enable'] = true
+        puma['ha'] = false
+        puma['worker_processes'] = 2
+        puma['min_threads'] = 1
+        puma['max_threads'] = 4
+        puma['worker_timeout'] = 60
+        puma['worker_boot_timeout'] = 60
+        
+        # Disable Unicorn (we're using Puma)
+        unicorn['enable'] = false
+        
+        # Sidekiq Configuration
+        sidekiq['max_concurrency'] = 10
+        sidekiq['min_concurrency'] = 5
+        sidekiq['timeout'] = 25
+        
+        # Disable heavy features for development
+        prometheus_monitoring['enable'] = false
+        gitlab_exporter['enable'] = false
+        node_exporter['enable'] = false
+        grafana['enable'] = false
+        alertmanager['enable'] = false
+        
+        # Disable registry for now
+        registry['enable'] = false
+        gitlab_rails['registry_enabled'] = false
+        
+        # Disable Pages
+        gitlab_pages['enable'] = false
+        
+        # Disable Mattermost
+        mattermost['enable'] = false
+        
+        # Disable KAS
+        gitlab_kas['enable'] = false
+        
+        # Nginx Configuration
+        nginx['enable'] = true
+        nginx['listen_port'] = 80
+        nginx['listen_https'] = false
+        nginx['client_max_body_size'] = '1024m'
+        nginx['worker_processes'] = 2
+        nginx['worker_connections'] = 1024
+        
+        # Gitaly Configuration
+        gitaly['enable'] = true
+        gitaly['configuration'] = {
+          storage: [
+            {
+              name: 'default',
+              path: '/var/opt/gitlab/git-data/repositories'
+            }
+          ]
+        }
+        
+        # Basic Security Settings
+        gitlab_rails['signup_enabled'] = false
+        gitlab_rails['gravatar_enabled'] = false
+        gitlab_rails['usage_ping_enabled'] = false
+        gitlab_rails['auto_sign_in_with_provider'] = false
+        
+        # Performance Settings
+        gitlab_rails['webhook_timeout'] = 30
+        gitlab_rails['git_timeout'] = 3600
+        
+        # Logging Configuration
+        logging['logrotate_frequency'] = "daily"
+        logging['logrotate_maxsize'] = "100MB"
+        logging['logrotate_rotate'] = 7
+        gitlab_rails['log_level'] = 'info'
+        
+        # Email Configuration (disabled for development)
+        gitlab_rails['smtp_enable'] = false
+        gitlab_rails['gitlab_email_enabled'] = false
+        
+        # Backup Configuration
+        gitlab_rails['backup_keep_time'] = 604800  # 7 days
+        gitlab_rails['backup_archive_permissions'] = 0640
+        
+    ports:
+      - '8080:80'      # HTTP
+      - '2222:22'      # SSH
+    volumes:
+      - gitlab-config:/etc/gitlab
+      - gitlab-logs:/var/log/gitlab
+      - gitlab-data:/var/opt/gitlab
+      - ./scripts:/scripts:ro  # Mount scripts for initialization
+    restart: unless-stopped
+    shm_size: '512m'
+    healthcheck:
+      test: ["CMD", "/opt/gitlab/bin/gitlab-healthcheck", "--fail", "--max-time", "10"]
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 600s  # Give GitLab 10 minutes to start
+    depends_on:
+      gitlab-postgres:
+        condition: service_healthy
+      gitlab-redis:
+        condition: service_healthy
+    networks:
+      - gitlab-network
+
+  # =============================================================================
+  # GitLab Setup Helper - Runs initial configuration
+  # =============================================================================
+  gitlab-setup:
+    image: alpine:3.19
+    container_name: gitlab-setup
+    volumes:
+      - ./scripts:/scripts:ro
+    environment:
+      GITLAB_URL: http://gitlab:80
+      GITLAB_ROOT_PASSWORD: Adm1nP@ssw0rd2025!
+      GITLAB_ROOT_EMAIL: admin@example.com
+    command: >
+      sh -c "
+        apk add --no-cache curl jq &&
+        echo 'Waiting for GitLab to be ready...' &&
+        while ! curl -f http://gitlab:80/-/health >/dev/null 2>&1; do
+          echo 'GitLab not ready yet, waiting...'
+          sleep 30
+        done &&
+        echo 'GitLab is ready! Running setup script...' &&
+        /scripts/gitlab-setup.sh
+      "
+    depends_on:
+      gitlab:
+        condition: service_healthy
+    networks:
+      - gitlab-network
+    restart: "no"  # Run once only
+
+# =============================================================================
+# Volumes for Data Persistence
+# =============================================================================
+volumes:
+  gitlab-config:
+    driver: local
+  gitlab-logs:
+    driver: local
+  gitlab-data:
+    driver: local
+  gitlab-postgres-data:
+    driver: local
+  gitlab-redis-data:
+    driver: local
+
+# =============================================================================
+# Networks for Service Communication
+# =============================================================================
+networks:
+  gitlab-network:
+    driver: bridge
+    name: gitlab-network
