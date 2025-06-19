@@ -24,6 +24,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **GitLab Integration**: Complete webhook processing and MR analysis
 - **HTTP Server Mode**: REST API endpoints for code review operations
 - **Docker Infrastructure**: Full containerized stack with monitoring
+- **Professional GitLab Setup**: Working multi-container GitLab instance with PostgreSQL/Redis separation
+- **Sample C# Project**: E-commerce API with intentional security/performance issues for testing
 
 ### 🚧 Partially Implemented/Excluded Features
 - **Enhanced 2025 Multi-Agent System**: Advanced features exist in `/AI/2025_Enhanced/` but are **excluded from compilation** (see `Mcp.CodeReview.csproj:42-48`)
@@ -38,7 +40,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Development Commands
 
-### Build and Run
+### Build and Run MCP Server
 ```bash
 # Build the project
 dotnet build
@@ -53,12 +55,47 @@ dotnet run --project src/Mcp.CodeReview/Mcp.CodeReview.csproj -- --http --port 5
 docker compose up --build
 ```
 
-### Testing
+### GitLab Setup (REQUIRED for Testing)
 ```bash
-# No specific test commands found in project structure
-# Health checks available via HTTP endpoints
+# Start GitLab (professional setup)
+cd gitlab-config
+./start-gitlab.sh
+
+# Check GitLab health
+./check-gitlab.sh
+
+# GitLab Access:
+# URL: http://localhost:8080
+# Root: root / Adm1nP@ssw0rd2025!
+# Developer: developer@example.com / DevP@ssw0rd123!
+# Reviewer: reviewer@example.com / RevP@ssw0rd123!
+```
+
+### Sample C# Project for Testing
+**Location**: `sample-projects/ecommerce-api/`
+**Purpose**: Contains intentional security and performance issues for MCP testing
+**Key Issues**:
+- SQL injection vulnerabilities
+- Hardcoded credentials and weak authentication
+- Sensitive data exposure
+- Performance N+1 query problems
+- Missing input validation
+
+### Testing MCP Code Review
+```bash
+# Health checks
 curl http://localhost:5002/health           # MCP Server
 curl http://localhost:8000/api/v1/heartbeat # ChromaDB
+curl http://localhost:8080/-/health         # GitLab
+
+# Test multi-agent review via API
+curl -X POST http://localhost:5002/api/review \
+  -H "Content-Type: application/json" \
+  -d '{
+    "repoUrl": "http://localhost:8080/root/ecommerce-api-demo.git",
+    "baseBranch": "main",
+    "headBranch": "feature/payment-improvements"
+  }'
 ```
 
 ## Service Integration Patterns
@@ -195,3 +232,67 @@ curl http://localhost:8000/api/v1/heartbeat # ChromaDB
 - Secrets management via environment variables
 - Input sanitization and path traversal protection
 - Command execution filtering and sandboxing
+
+## GitLab Integration Setup
+
+### Professional GitLab Instance (✅ OPERATIONAL)
+**Configuration Files**: `gitlab-config/`
+- **docker-compose-gitlab-fixed.yml**: Multi-container setup (PostgreSQL + Redis + GitLab)
+- **start-gitlab.sh**: Professional startup script with health monitoring
+- **check-gitlab.sh**: Real-time status monitoring
+
+### GitLab Access Details
+- **URL**: http://localhost:8080
+- **Root User**: `root / Adm1nP@ssw0rd2025!`
+- **Developer**: `developer@example.com / DevP@ssw0rd123!`
+- **Reviewer**: `reviewer@example.com / RevP@ssw0rd123!`
+- **SSH**: `ssh://git@localhost:2222`
+
+### GitLab Integration Status
+✅ **Container Health**: All services (GitLab, PostgreSQL, Redis) healthy
+✅ **Web Interface**: Responding with proper login redirects
+✅ **API Access**: Authentication working, token generation tested
+✅ **User Accounts**: Root + developer + reviewer accounts created
+✅ **Repository Access**: Ready for Git operations and merge requests
+
+## MCP Code Review Testing Workflow
+
+### Prerequisites
+1. **GitLab Running**: `./gitlab-config/start-gitlab.sh`
+2. **MCP Server Running**: `dotnet run --project src/Mcp.CodeReview/Mcp.CodeReview.csproj -- --http`
+3. **Sample Project**: Available in `sample-projects/ecommerce-api/`
+
+### Testing Process
+1. **Create GitLab Project**: Upload sample C# project to GitLab
+2. **Create Feature Branch**: Make changes to trigger security/performance issues
+3. **Create Merge Request**: Submit MR for review
+4. **Trigger MCP Review**: Use API or webhook to initiate multi-agent analysis
+5. **Verify AI Response**: Check that SecurityExpert, PerformanceAnalyst, etc. detect intentional issues
+
+### Expected AI Agent Detections
+- **SecurityExpert**: SQL injection, hardcoded credentials, data exposure
+- **PerformanceAnalyst**: N+1 queries, blocking async calls, memory leaks
+- **CodeQualityReviewer**: Missing validation, error handling issues
+- **ArchitectureExpert**: DI misconfigurations, service lifecycle issues
+
+### Files Structure Reference
+```
+.
+├── CLAUDE.md                           # This file - project guidance
+├── GITLAB_SETUP.md                     # Detailed GitLab setup documentation
+├── gitlab-config/                      # GitLab professional setup
+│   ├── docker-compose-gitlab-fixed.yml # Working GitLab configuration
+│   ├── start-gitlab.sh                 # Startup script
+│   └── check-gitlab.sh                 # Health monitoring
+├── scripts/                            # GitLab automation
+│   ├── gitlab-setup.sh                 # User creation automation
+│   └── postgres-init.sql               # Database initialization
+├── sample-projects/ecommerce-api/      # C# test project with issues
+│   ├── Controllers/PaymentController.cs # Intentional security issues
+│   ├── Services/                       # Performance problems
+│   └── EcommerceApi.csproj             # .NET 8 web API
+└── src/Mcp.CodeReview/                 # Main MCP server code
+    ├── AI/                             # Multi-agent system
+    ├── Tools/                          # MCP tools for integration
+    └── Services/                       # GitLab/GitHub/AI services
+```
