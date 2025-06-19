@@ -53,16 +53,14 @@ rootCommand.SetHandler(async (bool enableHttp, int port, int metricsPort) =>
             builder.Services.AddSingleton<GitHubService>();
             builder.Services.AddSingleton<GitLabService>();
 
-            // Configure AI Service Providers (Universal System)
+            // Configure AI Service Providers (Universal System) - OpenAI Only for this test
             builder.Services.AddHttpClient<OpenAIServiceProvider>();
-            builder.Services.AddScoped<ClaudeServiceProvider>();
             builder.Services.AddScoped<OpenAIServiceProvider>();
             builder.Services.AddScoped<AIServiceManager>();
             
             // Register AI providers collection for AIServiceManager
             builder.Services.AddScoped<IEnumerable<IAIServiceProvider>>(provider => new IAIServiceProvider[]
             {
-                provider.GetRequiredService<ClaudeServiceProvider>(),
                 provider.GetRequiredService<OpenAIServiceProvider>()
             });
             

@@ -5,6 +5,7 @@ using Mcp.CodeReview.Abstractions;
 using Mcp.CodeReview.Models;
 using Mcp.CodeReview.Services;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Configuration;
 using System.ComponentModel;
 using System.Text.Json;
 
@@ -44,14 +45,20 @@ public static partial class AdvancedAIReviewTools
             {
                 // Use the consolidated AI review system
                 var loggerFactory2 = LoggerFactory.Create(builder => builder.AddConsole());
-                var claudeLogger = loggerFactory2.CreateLogger<RefactoredClaudeService>();
                 var orchestratorLogger = loggerFactory2.CreateLogger<AgentOrchestrator>();
                 var systemLogger = loggerFactory2.CreateLogger<ConsolidatedAIReviewSystem>();
+                var claudeLogger = loggerFactory2.CreateLogger<RefactoredClaudeService>();
+                var refactoredClaudeService = new RefactoredClaudeService(claudeLogger);
                 
                 // Create services using interfaces
-                var refactoredClaudeService = new RefactoredClaudeService(claudeLogger);
+                var openAILogger = loggerFactory2.CreateLogger<OpenAIServiceProvider>();
+                var openAIProvider = new OpenAIServiceProvider(new HttpClient(), openAILogger);
+                var configBuilder = new ConfigurationBuilder();
+                var config = configBuilder.Build();
+                var aiManagerLogger = loggerFactory2.CreateLogger<AIServiceManager>();
+                var aiServiceManager = new AIServiceManager(new[] { openAIProvider }, aiManagerLogger, config);
                 var agentOrchestrator = new AgentOrchestrator(refactoredClaudeService, orchestratorLogger);
-                var consolidatedSystem = new ConsolidatedAIReviewSystem(refactoredClaudeService, agentOrchestrator, systemLogger);
+                var consolidatedSystem = new ConsolidatedAIReviewSystem(aiServiceManager, agentOrchestrator, systemLogger);
                 
                 // Create request
                 var request = new CodeReviewRequest
@@ -539,9 +546,15 @@ public static partial class AdvancedAIReviewTools
                 var orchestratorLogger = loggerFactory.CreateLogger<AgentOrchestrator>();
                 var claudeLogger = loggerFactory.CreateLogger<RefactoredClaudeService>();
                 var refactoredClaudeService = new RefactoredClaudeService(claudeLogger);
+                var openAILogger = loggerFactory.CreateLogger<OpenAIServiceProvider>();
+                var openAIProvider = new OpenAIServiceProvider(new HttpClient(), openAILogger);
+                var configBuilder = new ConfigurationBuilder();
+                var config = configBuilder.Build();
+                var aiManagerLogger = loggerFactory.CreateLogger<AIServiceManager>();
+                var aiServiceManager = new AIServiceManager(new[] { openAIProvider }, aiManagerLogger, config);
                 var agentOrchestrator = new AgentOrchestrator(refactoredClaudeService, orchestratorLogger);
                 var consolidatedSystem = new ConsolidatedAIReviewSystem(
-                    refactoredClaudeService,
+                    aiServiceManager,
                     agentOrchestrator,
                     typedLogger
                 );
@@ -1038,14 +1051,20 @@ public static partial class AdvancedAIReviewTools
             {
                 // Use the consolidated AI review system with ALL agents
                 var loggerFactory2 = LoggerFactory.Create(builder => builder.AddConsole());
-                var claudeLogger = loggerFactory2.CreateLogger<RefactoredClaudeService>();
                 var orchestratorLogger = loggerFactory2.CreateLogger<AgentOrchestrator>();
                 var systemLogger = loggerFactory2.CreateLogger<ConsolidatedAIReviewSystem>();
+                var claudeLogger = loggerFactory2.CreateLogger<RefactoredClaudeService>();
+                var refactoredClaudeService = new RefactoredClaudeService(claudeLogger);
                 
                 // Create services using interfaces
-                var refactoredClaudeService = new RefactoredClaudeService(claudeLogger);
+                var openAILogger = loggerFactory2.CreateLogger<OpenAIServiceProvider>();
+                var openAIProvider = new OpenAIServiceProvider(new HttpClient(), openAILogger);
+                var configBuilder = new ConfigurationBuilder();
+                var config = configBuilder.Build();
+                var aiManagerLogger = loggerFactory2.CreateLogger<AIServiceManager>();
+                var aiServiceManager = new AIServiceManager(new[] { openAIProvider }, aiManagerLogger, config);
                 var agentOrchestrator = new AgentOrchestrator(refactoredClaudeService, orchestratorLogger);
-                var consolidatedSystem = new ConsolidatedAIReviewSystem(refactoredClaudeService, agentOrchestrator, systemLogger);
+                var consolidatedSystem = new ConsolidatedAIReviewSystem(aiServiceManager, agentOrchestrator, systemLogger);
                 
                 // Build comprehensive agent list based on options
                 var requestedAgents = new List<AgentType>

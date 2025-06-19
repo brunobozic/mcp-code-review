@@ -13,7 +13,7 @@ namespace Mcp.CodeReview.AI;
 /// </summary>
 public class ConsolidatedAIReviewSystem : IAIReviewService
 {
-    private readonly IClaudeService _claudeService;
+    private readonly IAIServiceProvider _claudeService;
     private readonly IAgentOrchestrator _agentOrchestrator;
     private readonly ILogger<ConsolidatedAIReviewSystem> _logger;
     
@@ -29,19 +29,19 @@ public class ConsolidatedAIReviewSystem : IAIReviewService
     private readonly List<(string role, string content)> _conversationHistory;
     
     public ConsolidatedAIReviewSystem(
-        IClaudeService claudeService,
+        IAIServiceProvider aiServiceProvider,
         IAgentOrchestrator agentOrchestrator,
         ILogger<ConsolidatedAIReviewSystem> logger)
     {
-        _claudeService = claudeService ?? throw new ArgumentNullException(nameof(claudeService));
+        _claudeService = aiServiceProvider ?? throw new ArgumentNullException(nameof(aiServiceProvider));
         _agentOrchestrator = agentOrchestrator ?? throw new ArgumentNullException(nameof(agentOrchestrator));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         
         // Initialize enhanced frameworks
         var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
-        _nestedChatFramework = new NestedChatFramework(_claudeService, loggerFactory.CreateLogger<NestedChatFramework>());
+        _nestedChatFramework = new NestedChatFramework(aiServiceProvider, loggerFactory.CreateLogger<NestedChatFramework>());
         _dynamicAgentSelector = new DynamicAgentSelector(loggerFactory.CreateLogger<DynamicAgentSelector>());
-        _conversationManager = new EnhancedConversationManager(_claudeService, loggerFactory.CreateLogger<EnhancedConversationManager>());
+        _conversationManager = new EnhancedConversationManager(aiServiceProvider, loggerFactory.CreateLogger<EnhancedConversationManager>());
         
         _agentRegistry = new ConcurrentDictionary<AgentType, ISpecializedAgent>();
         _conversationHistory = new List<(string, string)>();

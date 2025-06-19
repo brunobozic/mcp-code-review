@@ -18,6 +18,7 @@ services:
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       - GITLAB_TOKEN=${GITLAB_TOKEN}
       - CLAUDE_API_KEY=${CLAUDE_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
       - GITLAB_HOST=${GITLAB_HOST:-http://gitlab:80}
       
       # Monitoring & Logging
@@ -294,7 +295,9 @@ services:
         gitlab_rails['gitlab_shell_ssh_port'] = 2222
         
         # Initial Configuration
-        gitlab_rails['initial_root_password'] = '${GITLAB_ROOT_PASSWORD:-SecureGitLabPass123!}'
+        gitlab_rails['initial_root_password'] = '${GITLAB_ROOT_PASSWORD:-Adm1nP@ssw0rd2025!}'
+        gitlab_rails['store_initial_root_password'] = false
+        gitlab_rails['display_initial_root_password'] = false
         gitlab_rails['initial_shared_runners_registration_token'] = 'secure-runner-token-12345'
         
         # Production-Grade Server Configuration
@@ -370,34 +373,11 @@ services:
         
         # Production-Grade Git Configuration
         gitlab_rails['git_timeout'] = 3600
-        git['bin_path'] = "/opt/gitlab/embedded/bin/git"
         gitaly['configuration'] = {
           storage: [
             {
               name: 'default',
               path: '/var/opt/gitlab/git-data/repositories'
-            }
-          ],
-          git: {
-            catfile_cache_size: 100,
-            use_bundled_git: true
-          },
-          gitconfig: [
-            {
-              key: 'pack.threads',
-              value: '4'
-            },
-            {
-              key: 'pack.windowMemory',
-              value: '100m'
-            },
-            {
-              key: 'core.preloadindex',
-              value: 'true'
-            },
-            {
-              key: 'core.fscache',
-              value: 'true'
             }
           ]
         }
@@ -623,7 +603,7 @@ services:
       - ./rag-data/collections:/chroma/collections:ro  # Pre-seeded collections
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; import json; response = urllib.request.urlopen('http://localhost:8000/api/v1/heartbeat'); data = json.loads(response.read()); exit(0 if 'nanosecond heartbeat' in data else 1)\""]
       interval: 30s
       timeout: 10s
       retries: 3

@@ -1,21 +1,76 @@
 # MCP Code Review System
 
-**✅ PRODUCTION READY** - Enterprise-grade AI-powered code review platform with multi-agent orchestration and RAG-enhanced analysis.
+> **AI-Powered Multi-Agent Code Review with GitLab Integration**
 
-## 🚀 System Status: FULLY OPERATIONAL
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![.NET](https://img.shields.io/badge/.NET-8.0-blue.svg)](https://dotnet.microsoft.com/)
+[![Docker](https://img.shields.io/badge/docker-compose-blue.svg)](https://docs.docker.com/compose/)
 
-- **✅ Multi-Agent AI Review**: 8+ specialized AI agents working perfectly
-- **✅ RAG System**: ChromaDB vector database with local embeddings 
-- **✅ GitLab Integration**: Complete webhook processing and automated reviews
-- **✅ Docker Infrastructure**: Full containerized stack with monitoring
-- **✅ Build System**: Zero errors, clean compilation, working containers
-- **✅ Performance**: All benchmarks met or exceeded
+## Overview
 
-## 📖 Complete Documentation
+The MCP Code Review System is a production-ready platform that provides intelligent, automated code review through specialized AI agents integrated seamlessly with GitLab workflows.
 
-**👉 [MCP_CODE_REVIEW_ULTIMATE_SPECIFICATION.md](./MCP_CODE_REVIEW_ULTIMATE_SPECIFICATION.md)** - Complete system specification covering everything implemented and tested.
+## Key Features
 
-*This is the single, comprehensive source of truth for the entire system.*
+- 🤖 **Multi-Agent AI Review**: Specialized agents for security, performance, quality, and architecture
+- 🔗 **GitLab Integration**: Automatic webhook-triggered reviews on merge requests
+- 🚦 **Quality Gates**: Configurable approval/blocking based on AI-generated quality scores
+- 📊 **RAG-Enhanced Analysis**: Vector database for contextual code pattern matching
+- 🏗️ **Production Architecture**: Containerized, scalable, with full monitoring stack
+
+## Quick Start
+
+### Prerequisites
+
+- Docker and Docker Compose
+- 8GB+ RAM recommended
+- OpenAI API key
+
+### One-Command Deployment
+
+```bash
+# Clone repository
+git clone <repository-url>
+cd mcp-code-review
+
+# Copy environment template
+cp .env.example .env
+# Edit .env with your API keys
+
+# Deploy full stack
+./scripts/automation/deploy-full-stack.sh
+```
+
+### Access Points
+
+After deployment:
+
+- **GitLab**: http://localhost:8080 (root/Adm1nP@ssw0rd2025!)
+- **MCP Server**: http://localhost:5002
+- **Grafana**: http://localhost:3000 (admin/SecureGrafanaPass123!)
+- **Prometheus**: http://localhost:9090
+
+## Documentation
+
+- **[Production Setup Guide](docs/deployment/PRODUCTION-SETUP.md)** - Complete deployment instructions
+- **[Architecture Overview](CLAUDE.md)** - System architecture and implementation details
+- **[API Reference](docs/api/)** - Endpoint documentation and examples
+
+## Troubleshooting
+
+### Health Check
+```bash
+./scripts/automation/health-check.sh
+```
+
+### Common Issues
+- **Services not starting**: Check Docker memory (8GB+ recommended)
+- **GitLab timeout**: Initial startup takes 10+ minutes
+- **API errors**: Verify API keys in `.env` file
+
+## License
+
+MIT License - see LICENSE file for details.
 
 ## ⚡ Quick Start (Verified Working)
 

@@ -11,11 +11,11 @@ namespace Mcp.CodeReview.AI;
 /// </summary>
 public class EnhancedConversationManager
 {
-    private readonly IClaudeService _claudeService;
+    private readonly IAIServiceProvider _claudeService;
     private readonly ILogger<EnhancedConversationManager> _logger;
     private readonly List<(string role, string content)> _conversationHistory;
 
-    public EnhancedConversationManager(IClaudeService claudeService, ILogger<EnhancedConversationManager> logger)
+    public EnhancedConversationManager(IAIServiceProvider claudeService, ILogger<EnhancedConversationManager> logger)
     {
         _claudeService = claudeService ?? throw new ArgumentNullException(nameof(claudeService));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));

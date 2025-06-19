@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using Mcp.CodeReview.Abstractions;
 using Mcp.CodeReview.Models;
 using Mcp.CodeReview.Utilities;
+using Mcp.CodeReview.Services;
 
 namespace Mcp.CodeReview.AI;
 
@@ -11,12 +12,12 @@ namespace Mcp.CodeReview.AI;
 /// </summary>
 public class NestedChatFramework
 {
-    private readonly IClaudeService _claudeService;
+    private readonly IAIServiceProvider _aiServiceProvider;
     private readonly ILogger<NestedChatFramework> _logger;
 
-    public NestedChatFramework(IClaudeService claudeService, ILogger<NestedChatFramework> logger)
+    public NestedChatFramework(IAIServiceProvider aiServiceProvider, ILogger<NestedChatFramework> logger)
     {
-        _claudeService = claudeService ?? throw new ArgumentNullException(nameof(claudeService));
+        _aiServiceProvider = aiServiceProvider ?? throw new ArgumentNullException(nameof(aiServiceProvider));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -210,7 +211,7 @@ public class NestedChatFramework
         CancellationToken cancellationToken)
     {
         var prompt = EnhancedPromptBuilder.BuildEnhancedAgentPrompt(agentType, content, context);
-        var analysis = await _claudeService.GenerateReviewAsync(prompt, cancellationToken);
+        var analysis = await _aiServiceProvider.GenerateReviewAsync(prompt, cancellationToken);
 
         return ParseAgentResult(agentType, analysis);
     }
@@ -223,7 +224,7 @@ public class NestedChatFramework
         CancellationToken cancellationToken)
     {
         var criticPrompt = BuildCriticismPrompt(analysis, originalContent, context, history);
-        var criticism = await _claudeService.GenerateReviewAsync(criticPrompt, cancellationToken);
+        var criticism = await _aiServiceProvider.GenerateReviewAsync(criticPrompt, cancellationToken);
 
         return ParseCriticismResult(criticism);
     }
@@ -237,7 +238,7 @@ public class NestedChatFramework
         CancellationToken cancellationToken)
     {
         var improvementPrompt = BuildImprovementPrompt(writerAgentType, currentAnalysis, criticism, content, context);
-        var improvedAnalysis = await _claudeService.GenerateReviewAsync(improvementPrompt, cancellationToken);
+        var improvedAnalysis = await _aiServiceProvider.GenerateReviewAsync(improvementPrompt, cancellationToken);
 
         return ParseAgentResult(writerAgentType, improvedAnalysis);
     }
@@ -249,7 +250,7 @@ public class NestedChatFramework
         CancellationToken cancellationToken)
     {
         var reflectionPrompt = BuildSelfReflectionPrompt(analysis, content, context);
-        var reflection = await _claudeService.GenerateReviewAsync(reflectionPrompt, cancellationToken);
+        var reflection = await _aiServiceProvider.GenerateReviewAsync(reflectionPrompt, cancellationToken);
 
         return ParseReflectionResult(reflection);
     }
@@ -263,7 +264,7 @@ public class NestedChatFramework
         CancellationToken cancellationToken)
     {
         var correctionPrompt = BuildSelfCorrectionPrompt(agentType, initialAnalysis, reflection, content, context);
-        var correctedAnalysis = await _claudeService.GenerateReviewAsync(correctionPrompt, cancellationToken);
+        var correctedAnalysis = await _aiServiceProvider.GenerateReviewAsync(correctionPrompt, cancellationToken);
 
         return ParseAgentResult(agentType, correctedAnalysis);
     }
@@ -276,7 +277,7 @@ public class NestedChatFramework
         CancellationToken cancellationToken)
     {
         var validationPrompt = BuildValidationPrompt(validatorType, resultToValidate, content, context);
-        var validation = await _claudeService.GenerateReviewAsync(validationPrompt, cancellationToken);
+        var validation = await _aiServiceProvider.GenerateReviewAsync(validationPrompt, cancellationToken);
 
         return ParseValidationAssessment(validatorType, validation);
     }
