@@ -11,14 +11,23 @@ public class AgentCollaborationEngine
 {
     private readonly IAIServiceProvider _aiService;
     private readonly ILogger<AgentCollaborationEngine> _logger;
+    private readonly ParallelAgentExecutor? _parallelExecutor;
+    private readonly EvidenceBasedValidator? _evidenceValidator;
+    private readonly DynamicConfidenceCalibrator? _confidenceCalibrator;
     private readonly List<AgentConversation> _activeConversations = new();
 
     public AgentCollaborationEngine(
         IAIServiceProvider aiService,
-        ILogger<AgentCollaborationEngine> logger)
+        ILogger<AgentCollaborationEngine> logger,
+        ParallelAgentExecutor? parallelExecutor = null,
+        EvidenceBasedValidator? evidenceValidator = null,
+        DynamicConfidenceCalibrator? confidenceCalibrator = null)
     {
         _aiService = aiService;
         _logger = logger;
+        _parallelExecutor = parallelExecutor;
+        _evidenceValidator = evidenceValidator;
+        _confidenceCalibrator = confidenceCalibrator;
     }
 
     /// <summary>
@@ -30,7 +39,8 @@ public class AgentCollaborationEngine
         Models.AgentExecutionResult[] initialResults,
         CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Starting collaborative agent review with {AgentCount} agents", initialResults.Length);
+        _logger.LogInformation("🤝 COLLABORATION STARTED: {AgentCount} agents beginning collaborative review", initialResults.Length);
+        _logger.LogInformation("🤝 COLLABORATION AGENTS: {Agents}", string.Join(", ", initialResults.Select(r => r.AgentType)));
 
         var conversation = new AgentConversation
         {
@@ -42,14 +52,14 @@ public class AgentCollaborationEngine
             // Phase 1: Initial findings presentation
             await PresentInitialFindings(conversation, initialResults, repositoryContext);
             
-            // Phase 2: Agent questioning and clarification
-            await ConductQuestioningRound(conversation, repositoryContext, cancellationToken);
+            // Phase 2: Agent questioning and clarification (optimized with parallel execution)
+            await ConductOptimizedQuestioningRound(conversation, repositoryContext, cancellationToken);
             
             // Phase 3: Challenge and debate
             await ConductChallengeRound(conversation, repositoryContext, cancellationToken);
             
-            // Phase 4: Evidence gathering
-            await GatherSupportingEvidence(conversation, repositoryContext, cancellationToken);
+            // Phase 4: Enhanced evidence gathering with validation
+            await ConductEnhancedEvidenceGatheringAsync(conversation, repositoryContext, cancellationToken);
             
             // Phase 5: Consensus building
             var consensus = await BuildConsensus(conversation, repositoryContext, cancellationToken);
@@ -60,8 +70,10 @@ public class AgentCollaborationEngine
             conversation.Status = ConversationStatus.Completed;
             conversation.CompletedAt = DateTime.UtcNow;
             
-            _logger.LogInformation("Collaborative review completed with consensus score: {Score}", 
-                consensus.OverallConfidence);
+            _logger.LogInformation("✅ COLLABORATION COMPLETED: Consensus score {Score:F2}, {MessageCount} agent messages, {Phases} phases", 
+                consensus.OverallConfidence, conversation.Messages.Count, 6);
+            _logger.LogInformation("🤝 COLLABORATION SUMMARY: {AgentCount} agents, {Agreements} agreements, {Disputes} disputes", 
+                conversation.Participants.Count, consensus.AgreedFindings.Count, consensus.DisputedFindings.Count);
 
             return collaborativeResult;
         }
@@ -82,7 +94,7 @@ public class AgentCollaborationEngine
         Models.AgentExecutionResult[] initialResults,
         RepositoryContext repositoryContext)
     {
-        _logger.LogInformation("Phase 1: Agents presenting initial findings");
+        _logger.LogInformation("🤝 COLLABORATION PHASE 1: Agents presenting initial findings");
 
         foreach (var result in initialResults.Where(r => r.Success))
         {
@@ -95,7 +107,8 @@ public class AgentCollaborationEngine
             };
 
             conversation.Messages.Add(message);
-            _logger.LogDebug("Agent {Agent} presented initial findings", result.AgentType);
+            _logger.LogInformation("🗣️  AGENT PRESENTATION: {Agent} shared findings - {FindingCount} key points, confidence: {Confidence:F2}", 
+                result.AgentType, result.KeyFindings.Count, result.ConfidenceScore);
         }
     }
 
@@ -120,12 +133,97 @@ public class AgentCollaborationEngine
 ";
     }
 
+    private async Task ConductOptimizedQuestioningRound(
+        AgentConversation conversation,
+        RepositoryContext repositoryContext,
+        CancellationToken cancellationToken)
+    {
+        if (_parallelExecutor != null)
+        {
+            _logger.LogInformation("🚀 OPTIMIZED QUESTIONING: Using parallel execution for improved performance");
+            
+            var questionMessages = await _parallelExecutor.ConductParallelQuestioningRoundAsync(
+                conversation, repositoryContext, cancellationToken);
+            
+            // Add generated questions to conversation
+            conversation.Messages.AddRange(questionMessages);
+            
+            // Generate responses for each question in parallel
+            await GenerateParallelQuestionResponses(conversation, questionMessages, repositoryContext, cancellationToken);
+        }
+        else
+        {
+            _logger.LogInformation("🤝 FALLBACK: Using sequential questioning (parallel executor not available)");
+            await ConductQuestioningRound(conversation, repositoryContext, cancellationToken);
+        }
+    }
+
+    private async Task GenerateParallelQuestionResponses(
+        AgentConversation conversation,
+        List<AgentMessage> questionMessages,
+        RepositoryContext repositoryContext,
+        CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("🔄 PARALLEL RESPONSES: Generating {QuestionCount} responses in parallel", questionMessages.Count);
+        
+        var responseTasks = questionMessages.Select(async questionMessage =>
+        {
+            try
+            {
+                return await GenerateQuestionResponse(conversation, questionMessage, repositoryContext, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "⚠️ RESPONSE FAILED: {FromAgent} → {ToAgent}",
+                    questionMessage.ToAgents.FirstOrDefault(), questionMessage.FromAgent);
+                return null;
+            }
+        });
+
+        var responses = await Task.WhenAll(responseTasks);
+        var validResponses = responses.Where(r => r != null).ToList();
+        
+        conversation.Messages.AddRange(validResponses!);
+        
+        _logger.LogInformation("✅ PARALLEL RESPONSES COMPLETE: Generated {ResponseCount} responses", validResponses.Count);
+    }
+
+    private async Task<AgentMessage?> GenerateQuestionResponse(
+        AgentConversation conversation,
+        AgentMessage questionMessage,
+        RepositoryContext repositoryContext,
+        CancellationToken cancellationToken)
+    {
+        var targetAgent = questionMessage.ToAgents.FirstOrDefault();
+        if (targetAgent == default) return null;
+
+        var responsePrompt = BuildResponsePrompt(questionMessage, repositoryContext);
+        var responseContent = await _aiService.GenerateReviewAsync(responsePrompt, cancellationToken);
+
+        if (string.IsNullOrWhiteSpace(responseContent))
+            return null;
+
+        return new AgentMessage
+        {
+            FromAgent = targetAgent,
+            ToAgents = new List<AgentType> { questionMessage.FromAgent },
+            Type = MessageType.Response,
+            Content = responseContent,
+            ReplyToMessageId = questionMessage.MessageId,
+            Metadata = new Dictionary<string, object>
+            {
+                ["GeneratedParallel"] = true,
+                ["ResponseToQuestion"] = questionMessage.MessageId
+            }
+        };
+    }
+
     private async Task ConductQuestioningRound(
         AgentConversation conversation, 
         RepositoryContext repositoryContext,
         CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Phase 2: Agent questioning and clarification");
+        _logger.LogInformation("🤝 COLLABORATION PHASE 2: Agent questioning and clarification round");
 
         var initialMessages = conversation.Messages.Where(m => m.Type == MessageType.InitialAnalysis).ToList();
         
@@ -148,6 +246,8 @@ public class AgentCollaborationEngine
                     };
                     
                     conversation.Messages.Add(questionMessage);
+                    _logger.LogInformation("❓ AGENT QUESTION: {Questioner} → {Target} asking for clarification", 
+                        questioner, targetMessage.FromAgent);
                     
                     // Get response from target agent
                     await GetAgentResponse(conversation, questionMessage, repositoryContext, cancellationToken);
@@ -205,6 +305,8 @@ Format your response as clear questions, not statements.
             };
             
             conversation.Messages.Add(responseMessage);
+            _logger.LogInformation("💬 AGENT RESPONSE: {Responder} answered {Questioner}'s question", 
+                questionMessage.ToAgents.First(), questionMessage.FromAgent);
         }
     }
 
@@ -240,7 +342,7 @@ Be technical, specific, and collaborative. If they raised valid points, acknowle
         RepositoryContext repositoryContext,
         CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Phase 3: Agent challenge and debate");
+        _logger.LogInformation("🤝 COLLABORATION PHASE 3: Agent challenge and debate round");
 
         var challenges = new List<AgentChallenge>();
         
@@ -267,6 +369,9 @@ Be technical, specific, and collaborative. If they raised valid points, acknowle
                 
                 // Get response to challenge
                 await GetChallengeResponse(challenge, repositoryContext, cancellationToken);
+                
+                _logger.LogInformation("⚔️  AGENT CHALLENGE: {Challenger} challenged {Challenged} on conflicting findings", 
+                    challenge.ChallengingAgent, challenge.ChallengedAgent);
                 
                 // Add challenge discussion to conversation
                 var challengeMessage = new AgentMessage
@@ -381,12 +486,215 @@ Be open to valid criticism while defending sound technical positions.
         challenge.Status = ChallengeStatus.Responded;
     }
 
+    private async Task ConductEnhancedEvidenceGatheringAsync(
+        AgentConversation conversation,
+        RepositoryContext repositoryContext,
+        CancellationToken cancellationToken)
+    {
+        if (_evidenceValidator != null && _parallelExecutor != null)
+        {
+            _logger.LogInformation("🔍 ENHANCED EVIDENCE: Using evidence-based validation with parallel execution");
+            
+            // Extract findings from conversation messages
+            var findings = ExtractFindingsFromConversation(conversation);
+            
+            if (findings.Any())
+            {
+                // Conduct parallel evidence gathering with validation
+                var evidenceMessages = await _parallelExecutor.ConductParallelEvidenceGatheringAsync(
+                    conversation, repositoryContext, cancellationToken);
+                
+                conversation.Messages.AddRange(evidenceMessages);
+                
+                // Validate critical findings with evidence requirements
+                await ValidateCriticalFindingsAsync(findings, conversation.Participants, repositoryContext, cancellationToken);
+            }
+            else
+            {
+                _logger.LogInformation("🔍 No findings extracted for evidence validation, using standard evidence gathering");
+                await GatherSupportingEvidence(conversation, repositoryContext, cancellationToken);
+            }
+        }
+        else
+        {
+            _logger.LogInformation("🔍 FALLBACK: Using standard evidence gathering (enhanced validator not available)");
+            await GatherSupportingEvidence(conversation, repositoryContext, cancellationToken);
+        }
+    }
+
+    private async Task ValidateCriticalFindingsAsync(
+        List<(Finding Finding, AgentType ReportingAgent)> findings,
+        List<AgentType> validators,
+        RepositoryContext repositoryContext,
+        CancellationToken cancellationToken)
+    {
+        var criticalFindings = findings.Where(f => 
+            f.Finding.Severity == "Critical" || f.Finding.Severity == "High" || 
+            f.Finding.Category == "Security").ToList();
+
+        if (!criticalFindings.Any())
+        {
+            _logger.LogInformation("🔍 VALIDATION SKIP: No critical findings requiring evidence validation");
+            return;
+        }
+
+        _logger.LogInformation("🔍 CRITICAL VALIDATION: Validating {CriticalCount} critical findings with evidence requirements",
+            criticalFindings.Count);
+
+        var validationResults = await _evidenceValidator!.ValidateFindingsBatchAsync(
+            criticalFindings, validators, repositoryContext, cancellationToken);
+
+        // Log validation summary
+        var validCount = validationResults.Count(r => r.ValidationOutcome == ValidationOutcome.Valid);
+        var invalidCount = validationResults.Count(r => r.ValidationOutcome == ValidationOutcome.Invalid);
+        var uncertainCount = validationResults.Count(r => r.ValidationOutcome == ValidationOutcome.Uncertain);
+
+        _logger.LogInformation("✅ EVIDENCE VALIDATION COMPLETE: {Valid} valid, {Invalid} invalid, {Uncertain} uncertain findings",
+            validCount, invalidCount, uncertainCount);
+
+        // Update finding confidence based on validation results
+        UpdateFindingConfidenceFromValidation(findings, validationResults);
+
+        // Add validation summaries as conversation messages
+        AddValidationSummariesToConversation(validationResults);
+    }
+
+    private List<(Finding Finding, AgentType ReportingAgent)> ExtractFindingsFromConversation(AgentConversation conversation)
+    {
+        var findings = new List<(Finding, AgentType)>();
+
+        // Extract findings from initial analysis messages
+        var analysisMessages = conversation.Messages.Where(m => m.Type == MessageType.InitialAnalysis).ToList();
+        
+        foreach (var message in analysisMessages)
+        {
+            // Parse findings from message content (simplified implementation)
+            var extractedFindings = ParseFindingsFromMessage(message);
+            findings.AddRange(extractedFindings.Select(f => (f, message.FromAgent)));
+        }
+
+        return findings;
+    }
+
+    private List<Finding> ParseFindingsFromMessage(AgentMessage message)
+    {
+        // Simplified parsing - in a real implementation, this would use more sophisticated NLP
+        var findings = new List<Finding>();
+        
+        var content = message.Content;
+        var lines = content.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        
+        foreach (var line in lines)
+        {
+            if (line.Contains("Issue:") || line.Contains("Finding:") || line.Contains("Problem:"))
+            {
+                var severity = DetermineSeverityFromContent(line);
+                var category = DetermineCategoryFromAgent(message.FromAgent);
+                
+                findings.Add(new Finding
+                {
+                    Id = Guid.NewGuid().ToString(),
+                    Description = ExtractDescription(line),
+                    Severity = severity,
+                    Category = category,
+                    Location = "Code under review",
+                    Confidence = 0.8
+                });
+            }
+        }
+        
+        return findings;
+    }
+
+    private string DetermineSeverityFromContent(string content)
+    {
+        if (content.Contains("critical", StringComparison.OrdinalIgnoreCase) ||
+            content.Contains("severe", StringComparison.OrdinalIgnoreCase))
+            return "Critical";
+        if (content.Contains("high", StringComparison.OrdinalIgnoreCase) ||
+            content.Contains("major", StringComparison.OrdinalIgnoreCase))
+            return "High";
+        if (content.Contains("medium", StringComparison.OrdinalIgnoreCase) ||
+            content.Contains("moderate", StringComparison.OrdinalIgnoreCase))
+            return "Medium";
+        return "Low";
+    }
+
+    private string DetermineCategoryFromAgent(AgentType agent)
+    {
+        return agent switch
+        {
+            AgentType.SecurityExpert => "Security",
+            AgentType.PerformanceAnalyst => "Performance",
+            AgentType.ArchitectureExpert => "Architecture",
+            AgentType.CodeQualityReviewer => "Code Quality",
+            AgentType.TestingSpecialist => "Testing",
+            _ => "General"
+        };
+    }
+
+    private string ExtractDescription(string line)
+    {
+        // Remove common prefixes and extract the actual description
+        var description = line;
+        var prefixes = new[] { "Issue:", "Finding:", "Problem:", "**", "*", "-" };
+        
+        foreach (var prefix in prefixes)
+        {
+            if (description.StartsWith(prefix))
+                description = description.Substring(prefix.Length).Trim();
+        }
+        
+        return description.Length > 200 ? description.Substring(0, 200) + "..." : description;
+    }
+
+    private void UpdateFindingConfidenceFromValidation(
+        List<(Finding Finding, AgentType ReportingAgent)> findings,
+        List<EvidenceValidationResult> validationResults)
+    {
+        foreach (var validationResult in validationResults)
+        {
+            var matchingFinding = findings.FirstOrDefault(f => 
+                f.Finding.Description == validationResult.OriginalFinding.Description);
+                
+            if (matchingFinding.Finding != null)
+            {
+                matchingFinding.Finding.Confidence = validationResult.CalibratedConfidence;
+                _logger.LogDebug("🎯 CONFIDENCE UPDATED: Finding confidence adjusted to {Confidence:F2} based on validation",
+                    validationResult.CalibratedConfidence);
+            }
+        }
+    }
+
+    private void AddValidationSummariesToConversation(List<EvidenceValidationResult> validationResults)
+    {
+        // Add validation summaries as system messages for transparency
+        foreach (var result in validationResults.Where(r => r.ValidationOutcome != ValidationOutcome.Valid))
+        {
+            var summaryMessage = new AgentMessage
+            {
+                FromAgent = AgentType.CodeQualityReviewer, // Use as system agent
+                ToAgents = new List<AgentType>(), // Broadcast
+                Type = MessageType.Evidence,
+                Content = $"VALIDATION SUMMARY: {result.ValidationOutcome} - " +
+                         $"Evidence Score: {result.FinalValidationScore:F2}, " +
+                         $"Calibrated Confidence: {result.CalibratedConfidence:F2}",
+                Metadata = new Dictionary<string, object>
+                {
+                    ["ValidationResult"] = true,
+                    ["OriginalFindingId"] = result.OriginalFinding.Id,
+                    ["ValidationOutcome"] = result.ValidationOutcome.ToString()
+                }
+            };
+        }
+    }
+
     private async Task GatherSupportingEvidence(
         AgentConversation conversation,
         RepositoryContext repositoryContext,
         CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Phase 4: Gathering supporting evidence");
+        _logger.LogInformation("🤝 COLLABORATION PHASE 4: Gathering supporting evidence from all agents");
 
         foreach (var agent in conversation.Participants)
         {
@@ -404,6 +712,7 @@ Be open to valid criticism while defending sound technical positions.
                 };
                 
                 conversation.Messages.Add(evidenceMessage);
+                _logger.LogInformation("📊 AGENT EVIDENCE: {Agent} provided supporting evidence from codebase context", agent);
             }
             
             await Task.Delay(100, cancellationToken);
@@ -445,7 +754,7 @@ Be specific and reference actual data points from the context.
         RepositoryContext repositoryContext,
         CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Phase 5: Building agent consensus");
+        _logger.LogInformation("🤝 COLLABORATION PHASE 5: Building consensus from all agent inputs");
 
         var consensusPrompt = BuildConsensusPrompt(conversation, repositoryContext);
         var consensusContent = await _aiService.GenerateReviewAsync(consensusPrompt, cancellationToken);
@@ -548,7 +857,7 @@ Focus on technical consensus and acknowledge different viewpoints where they exi
         AgentConsensus consensus,
         CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Phase 6: Final synthesis of collaborative results");
+        _logger.LogInformation("🤝 COLLABORATION PHASE 6: Final synthesis of collaborative results");
 
         var synthesisPrompt = BuildSynthesisPrompt(conversation, consensus);
         var finalSynthesis = await _aiService.GenerateReviewAsync(synthesisPrompt, cancellationToken);

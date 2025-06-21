@@ -24,6 +24,7 @@ public class CodeReviewRequest
 {
     public string Content { get; set; } = string.Empty;
     public string FileName { get; set; } = string.Empty;
+    public string FilePath { get; set; } = string.Empty;
     public string Language { get; set; } = string.Empty;
     public string Context { get; set; } = string.Empty;
     public List<AgentType> RequestedAgents { get; set; } = new();
@@ -99,6 +100,7 @@ public class AgentResult
 /// </summary>
 public class Finding
 {
+    public string Id { get; set; } = Guid.NewGuid().ToString();
     public string Type { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;
     public string Category { get; set; } = string.Empty;
@@ -108,6 +110,7 @@ public class Finding
     public int? LineNumber { get; set; }
     public string Evidence { get; set; } = string.Empty;
     public string Impact { get; set; } = string.Empty;
+    public double Confidence { get; set; } = 0.8;
     public List<string> Tags { get; set; } = new();
 }
 

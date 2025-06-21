@@ -35,7 +35,7 @@ namespace Mcp.CodeReview.Services
 
                 using var scope = _serviceProvider.CreateScope();
                 var vectorSearchService = scope.ServiceProvider.GetService<IVectorSearchService>();
-                var ragDataSeeder = scope.ServiceProvider.GetService<RagDataSeeder>();
+                // var ragDataSeeder = scope.ServiceProvider.GetService<RagDataSeeder>(); // Temporarily disabled
 
                 if (vectorSearchService == null)
                 {
@@ -48,12 +48,12 @@ namespace Mcp.CodeReview.Services
                 await vectorSearchService.InitializeCollectionsAsync(stoppingToken);
 
                 // Seed essential data if seeder is available
-                if (ragDataSeeder != null)
-                {
-                    _logger.LogInformation("Seeding essential RAG data");
-                    await ragDataSeeder.SeedEssentialDataAsync("default", stoppingToken);
-                    _logger.LogInformation("RAG data seeding completed");
-                }
+                // if (ragDataSeeder != null)
+                // {
+                //     _logger.LogInformation("Seeding essential RAG data");
+                //     await ragDataSeeder.SeedEssentialDataAsync("default", stoppingToken);
+                //     _logger.LogInformation("RAG data seeding completed");
+                // }
 
                 _logger.LogInformation("RAG system initialization completed successfully");
             }

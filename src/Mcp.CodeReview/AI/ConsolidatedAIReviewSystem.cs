@@ -19,6 +19,8 @@ public class ConsolidatedAIReviewSystem : IAIReviewService
     private readonly IAIServiceProvider _claudeService;
     private readonly IAgentOrchestrator _agentOrchestrator;
     private readonly ILogger<ConsolidatedAIReviewSystem> _logger;
+    private readonly LearningRAGService? _learningRAGService;
+    private readonly RepositoryContextService? _repositoryContextService;
     
     // Enhanced frameworks for 2024 improvements
     private readonly NestedChatFramework _nestedChatFramework;
@@ -37,7 +39,9 @@ public class ConsolidatedAIReviewSystem : IAIReviewService
         NestedChatFramework nestedChatFramework,
         DynamicAgentSelector dynamicAgentSelector,
         EnhancedConversationManager conversationManager,
-        ILogger<ConsolidatedAIReviewSystem> logger)
+        ILogger<ConsolidatedAIReviewSystem> logger,
+        LearningRAGService? learningRAGService = null,
+        RepositoryContextService? repositoryContextService = null)
     {
         _claudeService = aiServiceProvider ?? throw new ArgumentNullException(nameof(aiServiceProvider));
         _agentOrchestrator = agentOrchestrator ?? throw new ArgumentNullException(nameof(agentOrchestrator));
@@ -45,6 +49,8 @@ public class ConsolidatedAIReviewSystem : IAIReviewService
         _dynamicAgentSelector = dynamicAgentSelector ?? throw new ArgumentNullException(nameof(dynamicAgentSelector));
         _conversationManager = conversationManager ?? throw new ArgumentNullException(nameof(conversationManager));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _learningRAGService = learningRAGService;
+        _repositoryContextService = repositoryContextService;
         
         _agentRegistry = new ConcurrentDictionary<AgentType, ISpecializedAgent>();
         _conversationHistory = new List<(string, string)>();
@@ -62,13 +68,16 @@ public class ConsolidatedAIReviewSystem : IAIReviewService
             throw new ArgumentException($"Invalid request: {string.Join(", ", validation.Errors)}");
         }
 
+        _logger.LogInformation("🚀 MULTI-AGENT REVIEW STARTED: File {FileName} ({Language}), {RequestedAgents} agents requested", 
+            request.FileName, request.Language, request.RequestedAgents?.Count ?? 0);
+        
         try
         {
             return await ConductAdvancedReviewInternalAsync(request, cancellationToken);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to conduct multi-agent review");
+            _logger.LogError(ex, "❌ MULTI-AGENT REVIEW FAILED: Error during review of {FileName}", request.FileName);
             return CreateDefaultReviewResult(request);
         }
     }
@@ -83,8 +92,11 @@ public class ConsolidatedAIReviewSystem : IAIReviewService
 
         try
         {
+            _logger.LogInformation("🎯 FOCUSED ANALYSIS: Starting {PrimaryAgent} analysis for specific concerns", request.PrimaryAgent);
             var agent = _agentOrchestrator.CreateAgent(request.PrimaryAgent, new AgentConfiguration());
             var result = await agent.AnalyzeAsync(request.Content, request.Context, cancellationToken);
+            _logger.LogInformation("✅ FOCUSED ANALYSIS COMPLETE: {PrimaryAgent} found {FindingCount} issues", 
+                request.PrimaryAgent, result.Findings.Count);
             
             return new FocusedAnalysisResult
             {
@@ -153,6 +165,10 @@ public class ConsolidatedAIReviewSystem : IAIReviewService
         var startTime = DateTime.UtcNow;
         var correlationId = Guid.NewGuid().ToString("N")[..12];
         
+        // Step 1: Get repository context and RAG insights
+        var repositoryContext = await GetRepositoryContextAsync(request);
+        var ragContext = await GetRAGContextAsync(request, repositoryContext, cancellationToken);
+        
         using var scope = _logger.BeginScope(new Dictionary<string, object>
         {
             ["CorrelationId"] = correlationId,
@@ -166,8 +182,8 @@ public class ConsolidatedAIReviewSystem : IAIReviewService
 
         try
         {
-            // Step 1: Build comprehensive repository context
-            var repositoryContext = await BuildRepositoryContextAsync(request, cancellationToken);
+            // Step 2: Execute agents with RAG context
+            _logger.LogInformation("🤖 AGENT EXECUTION: Starting with {ContextItems} RAG context items", ragContext.TotalContextItems);
             _logger.LogInformation("Built repository context: {FileCount} files, {DependencyCount} dependencies", 
                 repositoryContext.Structure.FilesByType.Values.Sum(list => list.Count),
                 repositoryContext.Dependencies.Count);
@@ -213,6 +229,9 @@ public class ConsolidatedAIReviewSystem : IAIReviewService
             // Step 5: Synthesize final results with collaborative insights
             var finalResult = await SynthesizeCollaborativeResults(
                 collaborativeResult, request, repositoryContext, startTime, cancellationToken);
+                
+            // Step 6: Capture insights for future reviews (RAG learning)
+            await CaptureReviewInsightsAsync(request, finalResult, repositoryContext, cancellationToken);
 
             _logger.LogInformation("Contextual multi-agent review completed in {Duration}ms with {FindingCount} validated findings", 
                 (DateTime.UtcNow - startTime).TotalMilliseconds, finalResult.KeyFindings.Count);
@@ -767,5 +786,82 @@ public class ConsolidatedAIReviewSystem : IAIReviewService
                 ["CodeCharacteristics"] = agentSelection.CodeCharacteristics
             }
         };
+    }
+    
+    // RAG Integration Methods
+    private async Task<RepositoryContext> GetRepositoryContextAsync(CodeReviewRequest request)
+    {
+        if (_repositoryContextService != null)
+        {
+            try
+            {
+                return await _repositoryContextService.BuildRepositoryContextAsync(request.FilePath ?? request.FileName, new List<string> { request.FilePath ?? request.FileName });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to get repository context, using basic context");
+            }
+        }
+        
+        return new RepositoryContext
+        {
+            ProjectName = "unknown-project",
+            Structure = new ProjectStructure
+            {
+                ArchitecturePattern = "Unknown",
+                FilesByType = new Dictionary<string, List<string>>()
+            },
+            Dependencies = new Dictionary<string, string>(),
+            HistoricalPatterns = new List<HistoricalPattern>(),
+            ProjectStandards = new List<CodingStandard>()
+        };
+    }
+    
+    private async Task<EnhancedReviewContext> GetRAGContextAsync(
+        CodeReviewRequest request, 
+        RepositoryContext repositoryContext, 
+        CancellationToken cancellationToken)
+    {
+        if (_learningRAGService != null)
+        {
+            _logger.LogInformation("🔍 RAG CONTEXT: Retrieving relevant knowledge for {FileName}", request.FileName);
+            try
+            {
+                var context = await _learningRAGService.GetReviewContextAsync(request, repositoryContext, cancellationToken);
+                _logger.LogInformation("✅ RAG CONTEXT: Retrieved {TotalItems} contextual items", context.TotalContextItems);
+                return context;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "⚠️ RAG CONTEXT: Failed to retrieve context, proceeding without RAG");
+            }
+        }
+        else
+        {
+            _logger.LogInformation("🔄 RAG CONTEXT: RAG service not available, proceeding without contextual knowledge");
+        }
+        
+        return new EnhancedReviewContext();
+    }
+    
+    private async Task CaptureReviewInsightsAsync(
+        CodeReviewRequest request,
+        MultiAgentReviewResult result,
+        RepositoryContext repositoryContext,
+        CancellationToken cancellationToken)
+    {
+        if (_learningRAGService != null)
+        {
+            _logger.LogInformation("🧠 RAG LEARNING: Capturing insights from completed review");
+            try
+            {
+                await _learningRAGService.CaptureReviewInsightsAsync(request, result, repositoryContext, cancellationToken);
+                _logger.LogInformation("✅ RAG LEARNING: Review insights captured for future reference");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "⚠️ RAG LEARNING: Failed to capture insights");
+            }
+        }
     }
 }

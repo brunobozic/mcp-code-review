@@ -5,6 +5,7 @@ using Mcp.CodeReview.Infrastructure;
 using Mcp.CodeReview.Metrics;
 using Mcp.CodeReview.Services;
 using Mcp.CodeReview.GitLab;
+using Mcp.CodeReview.RAG;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.AspNetCore.Builder;
@@ -81,6 +82,26 @@ rootCommand.SetHandler(async (bool enableHttp, int port, int metricsPort) =>
             builder.Services.AddScoped<DynamicAgentSelector>();
             builder.Services.AddScoped<EnhancedConversationManager>();
             
+            // Configure optimization services (Priority 1 & 3 optimizations)
+            builder.Services.AddScoped<SmartCollaborationTrigger>();
+            builder.Services.AddMemoryCache(); // Required for IntelligentRAGCache
+            builder.Services.AddScoped<IntelligentRAGCache>();
+            builder.Services.AddSingleton<RAGCacheConfig>(); // Configuration for cache behavior
+            
+            // Priority 3: Parallel Agent Execution Optimization
+            builder.Services.AddScoped<ParallelAgentExecutor>();
+            builder.Services.AddSingleton<ParallelExecutionConfig>(); // Configuration for parallel execution
+            
+            // Priority 4: Evidence-Based Validation for Critical Findings
+            builder.Services.AddScoped<EvidenceBasedValidator>();
+            builder.Services.AddSingleton<EvidenceValidationConfig>(); // Configuration for evidence validation
+            
+            // Priority 5: Dynamic Confidence Calibration System
+            builder.Services.AddScoped<HistoricalAccuracyTracker>();
+            builder.Services.AddScoped<DynamicConfidenceCalibrator>();
+            builder.Services.AddSingleton<AccuracyTrackerConfig>(); // Configuration for accuracy tracking
+            builder.Services.AddSingleton<ConfidenceCalibrationConfig>(); // Configuration for confidence calibration
+            
             // Configure consolidated AI review system
             builder.Services.AddScoped<IAIReviewService, ConsolidatedAIReviewSystem>();
             
@@ -90,6 +111,19 @@ rootCommand.SetHandler(async (bool enableHttp, int port, int metricsPort) =>
             // Core services
             builder.Services.AddHttpClient<ChromaDbService>();
             builder.Services.AddScoped<ChromaDbService>();
+            builder.Services.AddScoped<IVectorSearchService, ChromaDbVectorSearchService>();
+            // builder.Services.AddScoped<RAGDataSeeder>(); // Temporarily disabled
+            builder.Services.AddScoped<LearningRAGService>();
+            
+            // Configure OpenAI embedding service for RAG
+            builder.Services.AddScoped<IEmbeddingService, OpenAiEmbeddingService>();
+            
+            // Configure ChromaDB options
+            builder.Services.Configure<ChromaDbConfig>(options =>
+            {
+                options.BaseUrl = builder.Configuration["CHROMADB_URL"] ?? "http://localhost:8000";
+                options.AuthToken = builder.Configuration["CHROMADB_AUTH_TOKEN"] ?? "test-token";
+            });
             
             Log.Information("✅ Enhanced 2025 Multi-Agent System configured and ready");
 
@@ -101,6 +135,15 @@ rootCommand.SetHandler(async (bool enableHttp, int port, int metricsPort) =>
                 client.Timeout = TimeSpan.FromMinutes(5);
             });
             builder.Services.AddScoped<GitLabIntegrationService>();
+            
+            // Add enhanced GitLab service for intelligent commenting
+            builder.Services.AddHttpClient<EnhancedGitLabService>(client =>
+            {
+                var gitLabUrl = builder.Configuration["GITLAB_HOST"] ?? "http://localhost:8080";
+                client.BaseAddress = new Uri(gitLabUrl);
+                client.Timeout = TimeSpan.FromMinutes(5);
+            });
+            builder.Services.AddScoped<EnhancedGitLabService>();
 
             // Add health checks (basic health check without external API dependencies)
             builder.Services.AddHealthChecks();
@@ -170,6 +213,26 @@ rootCommand.SetHandler(async (bool enableHttp, int port, int metricsPort) =>
 
             // Configure AI services with proper dependency injection
             builder.Services.AddScoped<ArchitectureStandardsAgent>();
+            
+            // Configure optimization services (Priority 1 & 3 optimizations) 
+            builder.Services.AddScoped<SmartCollaborationTrigger>();
+            builder.Services.AddMemoryCache(); // Required for IntelligentRAGCache
+            builder.Services.AddScoped<IntelligentRAGCache>();
+            builder.Services.AddSingleton<RAGCacheConfig>(); // Configuration for cache behavior
+            
+            // Priority 3: Parallel Agent Execution Optimization
+            builder.Services.AddScoped<ParallelAgentExecutor>();
+            builder.Services.AddSingleton<ParallelExecutionConfig>(); // Configuration for parallel execution
+            
+            // Priority 4: Evidence-Based Validation for Critical Findings
+            builder.Services.AddScoped<EvidenceBasedValidator>();
+            builder.Services.AddSingleton<EvidenceValidationConfig>(); // Configuration for evidence validation
+            
+            // Priority 5: Dynamic Confidence Calibration System
+            builder.Services.AddScoped<HistoricalAccuracyTracker>();
+            builder.Services.AddScoped<DynamicConfidenceCalibrator>();
+            builder.Services.AddSingleton<AccuracyTrackerConfig>(); // Configuration for accuracy tracking
+            builder.Services.AddSingleton<ConfidenceCalibrationConfig>(); // Configuration for confidence calibration
             
             // 2025 Enhancement: Choose orchestrator based on environment
             var use2025Enhanced = builder.Configuration.GetValue<bool>("USE_ENHANCED_2025_AGENTS", false); // Disabled for now
