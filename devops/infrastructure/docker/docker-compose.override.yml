@@ -1,0 +1,11 @@
+# ============================================================================
+# Docker Compose Override - Memory Optimization
+# ============================================================================
+# Generated for full profile with 15998MB RAM
+
+services:
+  # Memory-optimized service configurations
+  # Using default full configuration
+  mcp-server:
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production

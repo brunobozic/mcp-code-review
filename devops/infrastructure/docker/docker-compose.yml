@@ -1,0 +1,277 @@
+networks:
+  mcp-network:
+    driver: bridge
+
+volumes:
+  gitlab-data:
+    driver: local
+  gitlab-logs:
+    driver: local
+  gitlab-config:
+    driver: local
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local
+  chromadb-data:
+    driver: local
+  elasticsearch-data:
+    driver: local
+  grafana-data:
+    driver: local
+  sonarqube-data:
+    driver: local
+  sonar-postgres-data:
+    driver: local
+
+services:
+  # GitLab PostgreSQL
+  gitlab-postgres:
+    image: postgres:15.5-alpine
+    container_name: mcp-gitlab-postgres
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: gitlab
+      POSTGRES_USER: gitlab
+      POSTGRES_PASSWORD: ${GITLAB_POSTGRES_PASSWORD:-SecureGitLabDBPass123!}
+    networks:
+      - mcp-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gitlab"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # GitLab Redis
+  gitlab-redis:
+    image: redis:7.0-alpine
+    container_name: mcp-gitlab-redis
+    volumes:
+      - redis-data:/data
+    networks:
+      - mcp-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # GitLab CE
+  gitlab:
+    image: gitlab/gitlab-ce:16.7.2-ce.0
+    container_name: mcp-gitlab
+    hostname: gitlab.local
+    ports:
+      - "8080:80"
+      - "8022:22"
+    volumes:
+      - gitlab-config:/etc/gitlab
+      - gitlab-logs:/var/log/gitlab
+      - gitlab-data:/var/opt/gitlab
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://localhost'
+        gitlab_rails['initial_root_password'] = '${GITLAB_ROOT_PASSWORD:-Adm1nP@ssw0rd2025!}'
+        gitlab_rails['display_initial_root_password'] = false
+        gitlab_rails['store_initial_root_password'] = false
+        
+        # PostgreSQL configuration
+        postgresql['enable'] = false
+        gitlab_rails['db_adapter'] = 'postgresql'
+        gitlab_rails['db_encoding'] = 'utf8'
+        gitlab_rails['db_host'] = 'gitlab-postgres'
+        gitlab_rails['db_port'] = 5432
+        gitlab_rails['db_database'] = 'gitlab'
+        gitlab_rails['db_username'] = 'gitlab'
+        gitlab_rails['db_password'] = '${GITLAB_POSTGRES_PASSWORD:-SecureGitLabDBPass123!}'
+        
+        # Redis configuration
+        redis['enable'] = false
+        gitlab_rails['redis_host'] = 'gitlab-redis'
+        gitlab_rails['redis_port'] = 6379
+        
+        # Performance tuning (GitLab 14.0+ uses Puma, not Unicorn)
+        puma['worker_timeout'] = 120
+        puma['worker_processes'] = 2
+        sidekiq['max_concurrency'] = 10
+    networks:
+      - mcp-network
+    depends_on:
+      - gitlab-postgres
+      - gitlab-redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/-/readiness"]
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 300s
+
+  # Elasticsearch
+  elasticsearch:
+    image: elasticsearch:8.11.3
+    container_name: mcp-elasticsearch
+    ports:
+      - "9200:9200"
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms1g -Xmx2g"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    networks:
+      - mcp-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ChromaDB
+  chromadb:
+    image: chromadb/chroma:0.4.15
+    container_name: mcp-chromadb
+    ports:
+      - "8000:8000"
+    volumes:
+      - chromadb-data:/chroma/chroma
+    environment:
+      - CHROMA_SERVER_HTTP_PORT=8000
+      - IS_PERSISTENT=TRUE
+      - PERSIST_DIRECTORY=/chroma/chroma
+      - ANONYMIZED_TELEMETRY=FALSE
+    networks:
+      - mcp-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Grafana
+  grafana:
+    image: grafana/grafana:10.2.2
+    container_name: mcp-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin123}
+      - GF_SECURITY_SECRET_KEY=${GRAFANA_SECRET_KEY:-test-secret}
+    volumes:
+      - grafana-data:/var/lib/grafana
+    networks:
+      - mcp-network
+    depends_on:
+      - elasticsearch
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Prometheus
+  prometheus:
+    image: prom/prometheus:v2.48.1
+    container_name: mcp-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./services/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - mcp-network
+    restart: unless-stopped
+
+  # Fluentd
+  fluentd:
+    build:
+      context: services/fluentd
+      dockerfile: Dockerfile
+    container_name: mcp-fluentd
+    ports:
+      - "24224:24224"
+      - "24220:24220"
+    volumes:
+      - ./services/fluentd/conf:/fluentd/etc
+    networks:
+      - mcp-network
+    depends_on:
+      - elasticsearch
+    restart: unless-stopped
+
+  # SonarQube PostgreSQL
+  sonar-postgres:
+    image: postgres:15.5-alpine
+    container_name: mcp-sonar-postgres
+    environment:
+      POSTGRES_DB: sonar
+      POSTGRES_USER: sonar
+      POSTGRES_PASSWORD: ${SONAR_POSTGRES_PASSWORD:-SecureSonarDBPass123!}
+    volumes:
+      - sonar-postgres-data:/var/lib/postgresql/data
+    networks:
+      - mcp-network
+    restart: unless-stopped
+
+  # SonarQube
+  sonarqube:
+    image: sonarqube:10.3-community
+    container_name: mcp-sonarqube
+    ports:
+      - "9000:9000"
+    environment:
+      - SONAR_JDBC_URL=jdbc:postgresql://sonar-postgres:5432/sonar
+      - SONAR_JDBC_USERNAME=sonar
+      - SONAR_JDBC_PASSWORD=${SONAR_POSTGRES_PASSWORD:-SecureSonarDBPass123!}
+      - "SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true"
+    volumes:
+      - sonarqube-data:/opt/sonarqube/data
+    networks:
+      - mcp-network
+    depends_on:
+      - sonar-postgres
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/api/system/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
+  # MCP Server
+  mcp-server:
+    build:
+      context: ../../../
+      dockerfile: Dockerfile
+    container_name: mcp-server
+    ports:
+      - "5002:5002"
+      - "5003:5003"
+    environment:
+      - ASPNETCORE_URLS=http://+:5002;http://+:5003
+      - ASPNETCORE_ENVIRONMENT=${ASPNETCORE_ENVIRONMENT:-Development}
+      - CLAUDE_API_KEY=${CLAUDE_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GITLAB_TOKEN=${GITLAB_TOKEN}
+      - GITLAB_HOST=${GITLAB_HOST:-http://gitlab}
+      - CHROMADB_URL=${CHROMADB_URL:-http://chromadb:8000}
+      - ELASTICSEARCH_URL=${ELASTICSEARCH_URL:-http://elasticsearch:9200}
+    networks:
+      - mcp-network
+    depends_on:
+      - chromadb
+      - gitlab
+      - elasticsearch
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s

@@ -1,0 +1,66 @@
+# Temporary files
+*.tmp
+*.log
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+
+# Docker volumes and data
+*/data/
+*/logs/
+**/volumes/
+
+# Environment files with secrets
+.env
+.env.*
+config/env/.env
+src/**/.env
+.env.production
+.env.local
+.env.secrets
+
+# Build artifacts
+obj/
+bin/Debug/
+bin/Release/
+*.dll
+*.exe
+*.pdb
+
+# Test outputs
+test-results/
+coverage/
+*.coverage
+.nyc_output
+
+# Temporary test files
+**/tmp_*
+**/temp_*
+test-*-output.*
+
+# Backup files
+*.bak
+*.backup
+*.orig
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Node.js
+node_modules/
+npm-debug.log
+
+# Generated documentation that shouldn't be versioned
+docs/generated/
+api-docs/generated/
