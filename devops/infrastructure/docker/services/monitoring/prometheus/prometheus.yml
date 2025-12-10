@@ -1,0 +1,22 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'mcp-server'
+    static_configs:
+      - targets: ['mcp-server:5003']
+    metrics_path: /metrics
+
+  - job_name: 'gitlab'
+    static_configs:
+      - targets: ['gitlab:80']
+    metrics_path: /-/metrics
+
+  - job_name: 'elasticsearch'
+    static_configs:
+      - targets: ['elasticsearch:9200']
