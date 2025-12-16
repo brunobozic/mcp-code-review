@@ -19,7 +19,7 @@ public class ConsolidatedAIReviewSystem : IAIReviewService
     private readonly IAIServiceProvider _claudeService;
     private readonly IAgentOrchestrator _agentOrchestrator;
     private readonly ILogger<ConsolidatedAIReviewSystem> _logger;
-    private readonly LearningRAGService? _learningRAGService;
+    // private readonly LearningRAGService? _learningRAGService;
     private readonly RepositoryContextService? _repositoryContextService;
     
     // Enhanced frameworks for 2024 improvements
@@ -40,7 +40,7 @@ public class ConsolidatedAIReviewSystem : IAIReviewService
         DynamicAgentSelector dynamicAgentSelector,
         EnhancedConversationManager conversationManager,
         ILogger<ConsolidatedAIReviewSystem> logger,
-        LearningRAGService? learningRAGService = null,
+        // LearningRAGService? learningRAGService = null,
         RepositoryContextService? repositoryContextService = null)
     {
         _claudeService = aiServiceProvider ?? throw new ArgumentNullException(nameof(aiServiceProvider));
@@ -49,7 +49,7 @@ public class ConsolidatedAIReviewSystem : IAIReviewService
         _dynamicAgentSelector = dynamicAgentSelector ?? throw new ArgumentNullException(nameof(dynamicAgentSelector));
         _conversationManager = conversationManager ?? throw new ArgumentNullException(nameof(conversationManager));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        _learningRAGService = learningRAGService;
+        // _learningRAGService = learningRAGService;
         _repositoryContextService = repositoryContextService;
         
         _agentRegistry = new ConcurrentDictionary<AgentType, ISpecializedAgent>();
@@ -817,11 +817,15 @@ public class ConsolidatedAIReviewSystem : IAIReviewService
         };
     }
     
-    private async Task<EnhancedReviewContext> GetRAGContextAsync(
+    private async Task<RepositoryContext> GetRAGContextAsync(
         CodeReviewRequest request, 
         RepositoryContext repositoryContext, 
         CancellationToken cancellationToken)
     {
+        // Simplified: just return the repository context without RAG enhancement
+        _logger.LogInformation("🔄 RAG CONTEXT: Using basic repository context (LearningRAGService disabled)");
+        
+        /*
         if (_learningRAGService != null)
         {
             _logger.LogInformation("🔍 RAG CONTEXT: Retrieving relevant knowledge for {FileName}", request.FileName);
@@ -836,12 +840,9 @@ public class ConsolidatedAIReviewSystem : IAIReviewService
                 _logger.LogWarning(ex, "⚠️ RAG CONTEXT: Failed to retrieve context, proceeding without RAG");
             }
         }
-        else
-        {
-            _logger.LogInformation("🔄 RAG CONTEXT: RAG service not available, proceeding without contextual knowledge");
-        }
+        */
         
-        return new EnhancedReviewContext();
+        return repositoryContext;
     }
     
     private async Task CaptureReviewInsightsAsync(
@@ -850,18 +851,18 @@ public class ConsolidatedAIReviewSystem : IAIReviewService
         RepositoryContext repositoryContext,
         CancellationToken cancellationToken)
     {
-        if (_learningRAGService != null)
-        {
-            _logger.LogInformation("🧠 RAG LEARNING: Capturing insights from completed review");
-            try
-            {
-                await _learningRAGService.CaptureReviewInsightsAsync(request, result, repositoryContext, cancellationToken);
-                _logger.LogInformation("✅ RAG LEARNING: Review insights captured for future reference");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "⚠️ RAG LEARNING: Failed to capture insights");
-            }
-        }
+        // if (_learningRAGService != null)
+        // {
+        //     _logger.LogInformation("🧠 RAG LEARNING: Capturing insights from completed review");
+        //     try
+        //     {
+        //         await _learningRAGService.CaptureReviewInsightsAsync(request, result, repositoryContext, cancellationToken);
+        //         _logger.LogInformation("✅ RAG LEARNING: Review insights captured for future reference");
+        //     }
+        //     catch (Exception ex)
+        //     {
+        //         _logger.LogWarning(ex, "⚠️ RAG LEARNING: Failed to capture insights");
+        //     }
+        // }
     }
 }

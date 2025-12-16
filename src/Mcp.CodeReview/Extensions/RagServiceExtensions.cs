@@ -19,7 +19,7 @@ namespace Mcp.CodeReview.Extensions
             // Configure ChromaDB settings
             services.Configure<ChromaDbConfig>(options =>
             {
-                options.BaseUrl = configuration.GetValue<string>("ChromaDB:BaseUrl") ?? "http://localhost:8000";
+                options.BaseUrl = configuration.GetValue<string>("ChromaDB:BaseUrl") ?? "http://localhost:19193";
                 options.AuthToken = configuration.GetValue<string>("ChromaDB:AuthToken") ?? "";
                 options.TimeoutSeconds = configuration.GetValue<int>("ChromaDB:TimeoutSeconds", 30);
             });

@@ -113,7 +113,7 @@ rootCommand.SetHandler(async (bool enableHttp, int port, int metricsPort) =>
             builder.Services.AddScoped<ChromaDbService>();
             builder.Services.AddScoped<IVectorSearchService, ChromaDbVectorSearchService>();
             // builder.Services.AddScoped<RAGDataSeeder>(); // Temporarily disabled
-            builder.Services.AddScoped<LearningRAGService>();
+            // builder.Services.AddScoped<LearningRAGService>(); // Disabled - missing implementation
             
             // Configure OpenAI embedding service for RAG
             builder.Services.AddScoped<IEmbeddingService, OpenAiEmbeddingService>();
@@ -121,7 +121,7 @@ rootCommand.SetHandler(async (bool enableHttp, int port, int metricsPort) =>
             // Configure ChromaDB options
             builder.Services.Configure<ChromaDbConfig>(options =>
             {
-                options.BaseUrl = builder.Configuration["CHROMADB_URL"] ?? "http://localhost:8000";
+                options.BaseUrl = builder.Configuration["CHROMADB_URL"] ?? "http://localhost:19193";
                 options.AuthToken = builder.Configuration["CHROMADB_AUTH_TOKEN"] ?? "test-token";
             });
             
@@ -136,14 +136,14 @@ rootCommand.SetHandler(async (bool enableHttp, int port, int metricsPort) =>
             });
             builder.Services.AddScoped<GitLabIntegrationService>();
             
-            // Add enhanced GitLab service for intelligent commenting
-            builder.Services.AddHttpClient<EnhancedGitLabService>(client =>
-            {
-                var gitLabUrl = builder.Configuration["GITLAB_HOST"] ?? "http://localhost:8080";
-                client.BaseAddress = new Uri(gitLabUrl);
-                client.Timeout = TimeSpan.FromMinutes(5);
-            });
-            builder.Services.AddScoped<EnhancedGitLabService>();
+            // Enhanced GitLab service currently disabled due to compilation issues
+            // builder.Services.AddHttpClient<EnhancedGitLabService>(client =>
+            // {
+            //     var gitLabUrl = builder.Configuration["GITLAB_HOST"] ?? "http://localhost:8080";
+            //     client.BaseAddress = new Uri(gitLabUrl);
+            //     client.Timeout = TimeSpan.FromMinutes(5);
+            // });
+            // builder.Services.AddScoped<EnhancedGitLabService>();
 
             // Add health checks (basic health check without external API dependencies)
             builder.Services.AddHealthChecks();

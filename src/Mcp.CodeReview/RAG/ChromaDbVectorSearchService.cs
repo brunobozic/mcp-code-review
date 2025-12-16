@@ -769,7 +769,7 @@ namespace Mcp.CodeReview.RAG
 
     public class ChromaDbConfig
     {
-        public string BaseUrl { get; set; } = "http://localhost:8000";
+        public string BaseUrl { get; set; } = "http://localhost:19193";
         public string AuthToken { get; set; } = string.Empty;
         public int TimeoutSeconds { get; set; } = 30;
     }

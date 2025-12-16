@@ -670,7 +670,9 @@ public enum AgentPriority
 public class CodeCharacteristics
 {
     public string Language { get; set; } = "";
+    public string FileType { get; set; } = "";
     public int LinesOfCode { get; set; }
+    public int LinesChanged { get; set; }
     public int Complexity { get; set; }
     public bool HasDatabaseCalls { get; set; }
     public bool HasAsyncPatterns { get; set; }
@@ -687,6 +689,13 @@ public class CodeCharacteristics
     public List<string> SuspiciousPatterns { get; set; } = new();
     public double TestabilityScore { get; set; }
     public bool HasDataAccess { get; set; }
+    
+    // Security-related properties
+    public bool HasSecurityPatterns { get; set; }
+    public bool HasAuthenticationLogic { get; set; }
+    
+    // Architecture-related properties
+    public bool ArchitecturalChanges { get; set; }
 }
 
 public class AgentFitnessScore

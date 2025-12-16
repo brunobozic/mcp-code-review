@@ -15,7 +15,7 @@ public class ChromaDbService
     {
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        _baseUrl = configuration.GetConnectionString("ChromaDB") ?? "http://localhost:8000";
+        _baseUrl = configuration.GetConnectionString("ChromaDB") ?? "http://localhost:19193";
     }
 
     public async Task AddDocumentsAsync(string collectionName, List<ChromaDocument> documents, CancellationToken cancellationToken = default)

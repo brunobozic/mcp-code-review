@@ -60,6 +60,12 @@ public class RepositoryContext
     /// Insights about dependencies
     /// </summary>
     public List<DependencyInsight> DependencyInsights { get; set; } = new();
+    
+    /// <summary>
+    /// Total number of context items for RAG analysis
+    /// </summary>
+    public int TotalContextItems => HistoricalPatterns.Count + ProjectStandards.Count + 
+                                    DiscoveredPatterns.Count + DependencyInsights.Count;
 }
 
 public class ProjectStructure
