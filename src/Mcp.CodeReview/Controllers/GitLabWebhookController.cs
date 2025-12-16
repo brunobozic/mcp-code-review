@@ -52,13 +52,29 @@ namespace Mcp.CodeReview.Controllers
                     return BadRequest("Missing project information");
                 }
 
+                // For debugging - bypass GitLab service and directly test AI review
+                _logger.LogInformation("🔍 DEBUG: Webhook processing - EventType='{EventType}', MergeRequest exists={HasMr}", 
+                    payload.EventType, payload.MergeRequest != null);
+
                 // Process the webhook with the integration service first
                 var result = await _gitLabService.ProcessWebhookAsync(payload);
+                _logger.LogInformation("🔍 DEBUG: GitLab integration service returned: {Result}", result);
                 
                 // For merge request events, trigger contextual AI review
                 if (payload.EventType == "merge_request" && payload.MergeRequest != null)
                 {
-                    _ = Task.Run(async () => await TriggerContextualReviewAsync(payload));
+                    _logger.LogInformation("🤖 Starting background AI review task for MR {MrIid}", payload.MergeRequest.Iid);
+                    _ = Task.Run(async () => 
+                    {
+                        try
+                        {
+                            await TriggerContextualReviewAsync(payload);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "❌ Background AI review task failed for MR {MrIid}", payload.MergeRequest?.Iid);
+                        }
+                    });
                 }
                 
                 if (result)
@@ -201,13 +217,16 @@ namespace Mcp.CodeReview.Controllers
         {
             try
             {
+                _logger.LogInformation("🔍 TriggerContextualReviewAsync called for payload: {EventType}", payload.EventType);
+                
                 if (payload.Project == null || payload.MergeRequest == null)
                 {
-                    _logger.LogWarning("Cannot trigger contextual review - missing project or merge request data");
+                    _logger.LogWarning("❌ Cannot trigger contextual review - missing project or merge request data. Project: {Project}, MR: {MR}", 
+                        payload.Project?.Id, payload.MergeRequest?.Iid);
                     return;
                 }
 
-                _logger.LogInformation("Triggering contextual review for MR {MrIid} in project {ProjectId}", 
+                _logger.LogInformation("🚀 Triggering contextual review for MR {MrIid} in project {ProjectId}", 
                     payload.MergeRequest.Iid, payload.Project.Id);
 
                 // Extract changed files from merge request
