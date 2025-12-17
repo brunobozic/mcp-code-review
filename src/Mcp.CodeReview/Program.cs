@@ -53,7 +53,7 @@ rootCommand.SetHandler(async (bool enableHttp, int port, int metricsPort) =>
             builder.Services.AddSingleton<GitHubService>();
             builder.Services.AddSingleton<GitLabService>();
 
-            // Configure AI Service Providers (Universal System) - OpenAI Only for this test
+            // Configure AI Service Providers (Universal System) - OpenAI with Fixed HttpClient
             builder.Services.AddHttpClient<OpenAIServiceProvider>();
             builder.Services.AddScoped<OpenAIServiceProvider>();
             builder.Services.AddScoped<AIServiceManager>();
@@ -112,8 +112,14 @@ rootCommand.SetHandler(async (bool enableHttp, int port, int metricsPort) =>
             builder.Services.AddHttpClient<ChromaDbService>();
             builder.Services.AddScoped<ChromaDbService>();
             builder.Services.AddScoped<IVectorSearchService, ChromaDbVectorSearchService>();
-            // builder.Services.AddScoped<RAGDataSeeder>(); // Temporarily disabled
-            // builder.Services.AddScoped<LearningRAGService>(); // Disabled - missing implementation
+            
+            // SonarQube integration
+            builder.Services.AddHttpClient<SonarQubeService>();
+            builder.Services.AddScoped<SonarQubeService>();
+            
+            // Enable RAG services for external data retrieval
+            builder.Services.AddScoped<RagDataSeeder>();
+            builder.Services.AddScoped<LearningRAGService>();
             
             // Configure OpenAI embedding service for RAG
             builder.Services.AddScoped<IEmbeddingService, OpenAiEmbeddingService>();

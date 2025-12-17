@@ -16,17 +16,20 @@ namespace Mcp.CodeReview.Controllers
         private readonly ILogger<GitLabWebhookController> _logger;
         private readonly MetricsRegistry _metrics;
         private readonly IAIReviewService _reviewService;
+        private readonly IServiceScopeFactory _scopeFactory;
 
         public GitLabWebhookController(
             GitLabIntegrationService gitLabService,
             ILogger<GitLabWebhookController> logger,
             MetricsRegistry metrics,
-            IAIReviewService reviewService)
+            IAIReviewService reviewService,
+            IServiceScopeFactory scopeFactory)
         {
             _gitLabService = gitLabService;
             _logger = logger;
             _metrics = metrics;
             _reviewService = reviewService;
+            _scopeFactory = scopeFactory;
         }
 
         /// <summary>
@@ -66,9 +69,14 @@ namespace Mcp.CodeReview.Controllers
                     _logger.LogInformation("🤖 Starting background AI review task for MR {MrIid}", payload.MergeRequest.Iid);
                     _ = Task.Run(async () => 
                     {
+                        // Create a new scope for background task to avoid HttpClient disposal issues
+                        using var scope = _scopeFactory.CreateScope();
+                        var scopedReviewService = scope.ServiceProvider.GetRequiredService<IAIReviewService>();
+                        var scopedLogger = scope.ServiceProvider.GetRequiredService<ILogger<GitLabWebhookController>>();
+                        
                         try
                         {
-                            await TriggerContextualReviewAsync(payload);
+                            await TriggerContextualReviewWithScopeAsync(payload, scopedReviewService, scopedLogger);
                         }
                         catch (Exception ex)
                         {
@@ -226,8 +234,20 @@ namespace Mcp.CodeReview.Controllers
                     return;
                 }
 
-                _logger.LogInformation("🚀 Triggering contextual review for MR {MrIid} in project {ProjectId}", 
+                _logger.LogInformation("🚀 BACKGROUND_TASK_STARTED: Triggering contextual review for MR {MrIid} in project {ProjectId}", 
                     payload.MergeRequest.Iid, payload.Project.Id);
+
+                // Create test artifact for verification
+                var testArtifactPath = $"/tmp/mcp-background-task-{payload.Project.Id}-{payload.MergeRequest.Iid}-{DateTime.UtcNow:yyyyMMdd-HHmmss}.json";
+                await System.IO.File.WriteAllTextAsync(testArtifactPath, System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    StartTime = DateTime.UtcNow,
+                    ProjectId = payload.Project.Id,
+                    MergeRequestIid = payload.MergeRequest.Iid,
+                    Title = payload.MergeRequest.Title,
+                    Status = "STARTED"
+                }));
+                _logger.LogInformation("📋 TEST_ARTIFACT_CREATED: {ArtifactPath}", testArtifactPath);
 
                 // Extract changed files from merge request
                 var changedFiles = ExtractChangedFilesFromMergeRequest(payload);
@@ -278,8 +298,22 @@ namespace Mcp.CodeReview.Controllers
                 // Conduct multi-agent review with repository context
                 var reviewResult = await _reviewService.ConductMultiAgentReviewAsync(reviewRequest);
 
-                _logger.LogInformation("Contextual review completed for MR {MrIid} with {FindingCount} findings", 
+                _logger.LogInformation("✅ BACKGROUND_TASK_COMPLETED: Contextual review completed for MR {MrIid} with {FindingCount} findings", 
                     payload.MergeRequest.Iid, reviewResult.KeyFindings.Count);
+
+                // Update test artifact with completion status
+                var completionArtifactPath = $"/tmp/mcp-background-task-{payload.Project.Id}-{payload.MergeRequest.Iid}-completed.json";
+                await System.IO.File.WriteAllTextAsync(completionArtifactPath, System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    CompletedTime = DateTime.UtcNow,
+                    ProjectId = payload.Project.Id,
+                    MergeRequestIid = payload.MergeRequest.Iid,
+                    FindingsCount = reviewResult.KeyFindings.Count,
+                    QualityScore = reviewResult.QualityScore,
+                    Status = "COMPLETED",
+                    AgentResults = reviewResult.AgentResults.Count
+                }));
+                _logger.LogInformation("📋 COMPLETION_ARTIFACT_CREATED: {ArtifactPath}", completionArtifactPath);
 
                 // Post results back to GitLab (optional - would need GitLab API integration)
                 await PostReviewResultsToGitLabAsync(payload, reviewResult);
@@ -291,6 +325,120 @@ namespace Mcp.CodeReview.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to trigger contextual review for MR {MrIid}", 
+                    payload.MergeRequest?.Iid);
+                
+                _metrics.IncrementCounter("contextual_reviews_completed_total", 
+                    ("project_id", payload.Project?.Id.ToString() ?? "unknown"),
+                    ("status", "failed"));
+            }
+        }
+
+        /// <summary>
+        /// Scoped version of TriggerContextualReviewAsync that uses scoped services to avoid HttpClient disposal
+        /// </summary>
+        private async Task TriggerContextualReviewWithScopeAsync(GitLabWebhookPayload payload, IAIReviewService scopedReviewService, ILogger<GitLabWebhookController> scopedLogger)
+        {
+            try
+            {
+                scopedLogger.LogInformation("🔍 TriggerContextualReviewWithScopeAsync called for payload: {EventType}", payload.EventType);
+                
+                if (payload.Project == null || payload.MergeRequest == null)
+                {
+                    scopedLogger.LogWarning("❌ Cannot trigger contextual review - missing project or merge request data. Project: {Project}, MR: {MR}", 
+                        payload.Project?.Id, payload.MergeRequest?.Iid);
+                    return;
+                }
+
+                scopedLogger.LogInformation("🚀 BACKGROUND_TASK_STARTED: Triggering contextual review for MR {MrIid} in project {ProjectId}", 
+                    payload.MergeRequest.Iid, payload.Project.Id);
+
+                // Create test artifact for verification
+                var testArtifactPath = $"/tmp/mcp-background-task-{payload.Project.Id}-{payload.MergeRequest.Iid}-{DateTime.UtcNow:yyyyMMdd-HHmmss}.json";
+                await System.IO.File.WriteAllTextAsync(testArtifactPath, System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    StartTime = DateTime.UtcNow,
+                    ProjectId = payload.Project.Id,
+                    MergeRequestIid = payload.MergeRequest.Iid,
+                    Title = payload.MergeRequest.Title,
+                    Status = "STARTED"
+                }));
+                scopedLogger.LogInformation("📋 TEST_ARTIFACT_CREATED: {ArtifactPath}", testArtifactPath);
+
+                // Extract changed files from merge request
+                var changedFiles = ExtractChangedFilesFromMergeRequest(payload);
+                
+                // Get the primary file being reviewed (first changed file or diff content)
+                var primaryContent = await GetPrimaryReviewContentAsync(payload, changedFiles);
+                
+                if (string.IsNullOrEmpty(primaryContent))
+                {
+                    scopedLogger.LogWarning("No content to review for MR {MrIid}", payload.MergeRequest.Iid);
+                    return;
+                }
+
+                // Create comprehensive review request with repository context
+                var reviewRequest = new CodeReviewRequest
+                {
+                    Content = primaryContent,
+                    FileName = changedFiles.FirstOrDefault() ?? "merge_request.diff",
+                    Language = DetectLanguageFromFiles(changedFiles),
+                    RequestedAgents = new List<AgentType>
+                    {
+                        AgentType.SecurityExpert,
+                        AgentType.PerformanceAnalyst,
+                        AgentType.CodeQualityReviewer,
+                        AgentType.ArchitectureExpert,
+                        AgentType.TestingSpecialist
+                    },
+                    Options = new ReviewOptions
+                    {
+                        IncludeSecurityAnalysis = true,
+                        IncludePerformanceAnalysis = true,
+                        IncludeQualityAnalysis = true,
+                        IncludeTestSuggestions = true,
+                        ReviewDepth = "comprehensive"
+                    },
+                    Metadata = new Dictionary<string, object>
+                    {
+                        ["projectId"] = payload.Project.Id.ToString(),
+                        ["mergeRequestIid"] = payload.MergeRequest.Iid.ToString(),
+                        ["changedFiles"] = changedFiles,
+                        ["webhookEvent"] = payload.EventType,
+                        ["contextualReview"] = true,
+                        ["repositoryContext"] = true
+                    }
+                };
+
+                // Conduct multi-agent review with repository context using scoped service
+                var reviewResult = await scopedReviewService.ConductMultiAgentReviewAsync(reviewRequest);
+
+                scopedLogger.LogInformation("✅ BACKGROUND_TASK_COMPLETED: Contextual review completed for MR {MrIid} with {FindingCount} findings", 
+                    payload.MergeRequest.Iid, reviewResult.KeyFindings.Count);
+
+                // Update test artifact with completion status
+                var completionArtifactPath = $"/tmp/mcp-background-task-{payload.Project.Id}-{payload.MergeRequest.Iid}-completed.json";
+                await System.IO.File.WriteAllTextAsync(completionArtifactPath, System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    CompletedTime = DateTime.UtcNow,
+                    ProjectId = payload.Project.Id,
+                    MergeRequestIid = payload.MergeRequest.Iid,
+                    FindingsCount = reviewResult.KeyFindings.Count,
+                    QualityScore = reviewResult.QualityScore,
+                    Status = "COMPLETED",
+                    AgentResults = reviewResult.AgentResults.Count
+                }));
+                scopedLogger.LogInformation("📋 COMPLETION_ARTIFACT_CREATED: {ArtifactPath}", completionArtifactPath);
+
+                // Post results back to GitLab (optional - would need GitLab API integration)
+                await PostReviewResultsToGitLabAsync(payload, reviewResult);
+
+                _metrics.IncrementCounter("contextual_reviews_completed_total", 
+                    ("project_id", payload.Project.Id.ToString()),
+                    ("status", "success"));
+            }
+            catch (Exception ex)
+            {
+                scopedLogger.LogError(ex, "Failed to trigger contextual review for MR {MrIid}", 
                     payload.MergeRequest?.Iid);
                 
                 _metrics.IncrementCounter("contextual_reviews_completed_total", 

@@ -2,6 +2,37 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 🎯 PROPER TESTING METHODOLOGY - MANDATORY APPROACH
+
+### Core Testing Principles
+**NEVER cut corners or use manual verification for critical system functionality. Always follow this methodology:**
+
+1. **End-to-End Testing First**: Use Playwright or similar tools to test complete user/system flows
+2. **Automated Verification**: Create automated tests that can be run repeatedly and consistently  
+3. **Background Process Monitoring**: Verify background tasks actually execute using proper logging/monitoring
+4. **Integration Testing**: Test actual integrations (GitLab webhooks → AI processing) not just API endpoints
+5. **Evidence-Based Validation**: Capture concrete evidence (logs, database changes, file outputs) that processes executed
+
+### Webhook Background Task Testing Protocol
+When verifying GitLab webhook → background AI task execution:
+
+1. **Setup Monitoring**: Instrument the background task with logging/metrics that can be verified
+2. **Create Test Environment**: Set up GitLab instance + MCP server with proper connectivity
+3. **Automated Test Suite**: Write Playwright tests that:
+   - Send actual GitLab webhook payloads
+   - Monitor background task execution via logs/metrics
+   - Verify AI review results are generated and stored
+   - Validate complete end-to-end workflow
+4. **Evidence Collection**: Capture artifacts proving the flow worked (log entries, generated reports, etc.)
+5. **Regression Testing**: Ensure tests can be run repeatedly to prevent future breaks
+
+### What NOT To Do
+❌ **Manual curl testing** - Unreliable, not repeatable, doesn't verify background execution
+❌ **Assumption-based verification** - "It should work" based on HTTP responses  
+❌ **Separate component testing** - Testing API endpoints separately doesn't prove integration works
+❌ **Log-free validation** - Can't verify background tasks without proper instrumentation
+❌ **Corner-cutting** - Manual verification for critical system functionality
+
 ## Architecture Overview
 
 **Dual-Mode MCP Server**: .NET 8 application that operates in both STDIO (standard MCP) and HTTP server modes for AI-assisted code review with GitLab/GitHub integration and RAG-enhanced analysis.
@@ -73,7 +104,7 @@ cd gitlab-config
 ./check-gitlab.sh
 
 # GitLab Access:
-# URL: http://localhost:8080
+# URL: http://localhost:9191
 # Root: root / Adm1nP@ssw0rd2025!
 # Developer: developer@example.com / DevP@ssw0rd123!
 # Reviewer: reviewer@example.com / RevP@ssw0rd123!
@@ -93,14 +124,14 @@ cd gitlab-config
 ```bash
 # Health checks
 curl http://localhost:5002/health           # MCP Server
-curl http://localhost:8000/api/v1/heartbeat # ChromaDB
-curl http://localhost:8080/-/health         # GitLab
+curl http://localhost:19193/api/v1/heartbeat # ChromaDB
+curl http://localhost:9191/-/health         # GitLab
 
 # Test multi-agent review via API
 curl -X POST http://localhost:5002/api/review \
   -H "Content-Type: application/json" \
   -d '{
-    "repoUrl": "http://localhost:8080/root/ecommerce-api-demo.git",
+    "repoUrl": "http://localhost:9191/root/ecommerce-api-demo.git",
     "baseBranch": "main",
     "headBranch": "feature/payment-improvements"
   }'
@@ -520,7 +551,7 @@ var characteristics = await _analyzer.AnalyzeCodeCharacteristics(code, language,
 - **check-gitlab.sh**: Real-time status monitoring
 
 ### GitLab Access Details
-- **URL**: http://localhost:8080
+- **URL**: http://localhost:9191
 - **Root User**: `root / Adm1nP@ssw0rd2025!`
 - **Developer**: `developer@example.com / DevP@ssw0rd123!`
 - **Reviewer**: `reviewer@example.com / RevP@ssw0rd123!`
