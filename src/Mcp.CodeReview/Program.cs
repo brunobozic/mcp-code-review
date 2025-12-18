@@ -53,18 +53,25 @@ rootCommand.SetHandler(async (bool enableHttp, int port, int metricsPort) =>
             builder.Services.AddSingleton<GitHubService>();
             builder.Services.AddSingleton<GitLabService>();
 
-            // Configure AI Service Providers (Universal System) - OpenAI with Fixed HttpClient
+            // Configure AI providers with proper HttpClient lifecycle  
             builder.Services.AddHttpClient<OpenAIServiceProvider>();
-            builder.Services.AddScoped<OpenAIServiceProvider>();
-            builder.Services.AddScoped<AIServiceManager>();
+            builder.Services.AddScoped<ClaudeService>();
             
-            // Register AI providers collection for AIServiceManager
-            builder.Services.AddScoped<IEnumerable<IAIServiceProvider>>(provider => new IAIServiceProvider[]
+            // Note: OpenAIServiceProvider already registered by AddHttpClient above
+            
+            // Configure AI Service Manager to manage all providers
+            builder.Services.AddScoped<AIServiceManager>(provider =>
             {
-                provider.GetRequiredService<OpenAIServiceProvider>()
+                var logger = provider.GetRequiredService<ILogger<AIServiceManager>>();
+                var configuration = provider.GetRequiredService<IConfiguration>();
+                var claudeService = provider.GetRequiredService<ClaudeService>();
+                var openaiService = provider.GetRequiredService<OpenAIServiceProvider>();
+                
+                var providers = new List<IAIServiceProvider> { claudeService, openaiService };
+                return new AIServiceManager(providers, logger, configuration);
             });
             
-            // Register primary AI service interface
+            // Use AI Service Manager as the primary IAIServiceProvider
             builder.Services.AddScoped<IAIServiceProvider>(provider => 
                 provider.GetRequiredService<AIServiceManager>());
 
@@ -108,20 +115,37 @@ rootCommand.SetHandler(async (bool enableHttp, int port, int metricsPort) =>
             // Configure RAG services
             Log.Information("🚀 Configuring RAG and Vector Search System");
             
-            // Core services
-            builder.Services.AddHttpClient<ChromaDbService>();
-            builder.Services.AddScoped<ChromaDbService>();
+            // Core services with proper HttpClient lifecycle
+            builder.Services.AddHttpClient<ChromaDbService>(client =>
+            {
+                client.Timeout = TimeSpan.FromMinutes(2);
+            });
+            // Note: AddHttpClient<T>() automatically registers T as scoped
             builder.Services.AddScoped<IVectorSearchService, ChromaDbVectorSearchService>();
             
-            // SonarQube integration
-            builder.Services.AddHttpClient<SonarQubeService>();
-            builder.Services.AddScoped<SonarQubeService>();
+            // SonarQube integration with proper HttpClient lifecycle
+            builder.Services.AddHttpClient<SonarQubeService>(client =>
+            {
+                client.Timeout = TimeSpan.FromMinutes(5);
+            });
+            // Note: AddHttpClient<T>() automatically registers T as scoped
             
             // Enable RAG services for external data retrieval
             builder.Services.AddScoped<RagDataSeeder>();
             builder.Services.AddScoped<LearningRAGService>();
             
-            // Configure OpenAI embedding service for RAG
+            // Configure OpenAI embedding service for RAG with proper HttpClient lifecycle
+            builder.Services.Configure<EmbeddingConfig>(options =>
+            {
+                options.BaseUrl = "https://api.openai.com/v1/";
+                options.ApiKey = builder.Configuration["OPENAI_API_KEY"] ?? "";
+                options.Model = "text-embedding-3-small"; // Cost-effective model
+            });
+            builder.Services.AddHttpClient<OpenAiEmbeddingService>(client =>
+            {
+                client.BaseAddress = new Uri("https://api.openai.com/v1/");
+                client.Timeout = TimeSpan.FromMinutes(2);
+            });
             builder.Services.AddScoped<IEmbeddingService, OpenAiEmbeddingService>();
             
             // Configure ChromaDB options

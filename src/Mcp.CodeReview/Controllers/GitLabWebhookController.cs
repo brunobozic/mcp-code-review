@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using System.Text.Json;
+using System.Text;
 using Mcp.CodeReview.GitLab;
 using Mcp.CodeReview.Metrics;
 using Mcp.CodeReview.Abstractions;
@@ -73,10 +74,11 @@ namespace Mcp.CodeReview.Controllers
                         using var scope = _scopeFactory.CreateScope();
                         var scopedReviewService = scope.ServiceProvider.GetRequiredService<IAIReviewService>();
                         var scopedLogger = scope.ServiceProvider.GetRequiredService<ILogger<GitLabWebhookController>>();
+                        var scopedGitLabService = scope.ServiceProvider.GetRequiredService<GitLabIntegrationService>();
                         
                         try
                         {
-                            await TriggerContextualReviewWithScopeAsync(payload, scopedReviewService, scopedLogger);
+                            await TriggerContextualReviewWithScopeAsync(payload, scopedReviewService, scopedLogger, scopedGitLabService);
                         }
                         catch (Exception ex)
                         {
@@ -315,8 +317,8 @@ namespace Mcp.CodeReview.Controllers
                 }));
                 _logger.LogInformation("📋 COMPLETION_ARTIFACT_CREATED: {ArtifactPath}", completionArtifactPath);
 
-                // Post results back to GitLab (optional - would need GitLab API integration)
-                await PostReviewResultsToGitLabAsync(payload, reviewResult);
+                // Post results back to GitLab (use instance service for non-scoped version)
+                await PostReviewResultsToGitLabAsync(payload, reviewResult, _gitLabService, _logger);
 
                 _metrics.IncrementCounter("contextual_reviews_completed_total", 
                     ("project_id", payload.Project.Id.ToString()),
@@ -336,7 +338,7 @@ namespace Mcp.CodeReview.Controllers
         /// <summary>
         /// Scoped version of TriggerContextualReviewAsync that uses scoped services to avoid HttpClient disposal
         /// </summary>
-        private async Task TriggerContextualReviewWithScopeAsync(GitLabWebhookPayload payload, IAIReviewService scopedReviewService, ILogger<GitLabWebhookController> scopedLogger)
+        private async Task TriggerContextualReviewWithScopeAsync(GitLabWebhookPayload payload, IAIReviewService scopedReviewService, ILogger<GitLabWebhookController> scopedLogger, GitLabIntegrationService scopedGitLabService)
         {
             try
             {
@@ -429,8 +431,8 @@ namespace Mcp.CodeReview.Controllers
                 }));
                 scopedLogger.LogInformation("📋 COMPLETION_ARTIFACT_CREATED: {ArtifactPath}", completionArtifactPath);
 
-                // Post results back to GitLab (optional - would need GitLab API integration)
-                await PostReviewResultsToGitLabAsync(payload, reviewResult);
+                // Post results back to GitLab using scoped service to avoid HttpClient disposal
+                await PostReviewResultsToGitLabAsync(payload, reviewResult, scopedGitLabService, scopedLogger);
 
                 _metrics.IncrementCounter("contextual_reviews_completed_total", 
                     ("project_id", payload.Project.Id.ToString()),
@@ -493,25 +495,273 @@ namespace Mcp.CodeReview.Controllers
             return "Mixed";
         }
 
-        private async Task PostReviewResultsToGitLabAsync(GitLabWebhookPayload payload, MultiAgentReviewResult reviewResult)
+        private async Task PostReviewResultsToGitLabAsync(GitLabWebhookPayload payload, MultiAgentReviewResult reviewResult, GitLabIntegrationService gitLabService, ILogger<GitLabWebhookController> logger)
         {
             try
             {
-                // This would post the review results back to GitLab as a merge request comment
-                _logger.LogInformation("Review results ready for MR {MrIid}: {FindingCount} findings, quality score {QualityScore}", 
-                    payload.MergeRequest?.Iid, 
+                if (payload.Project == null || payload.MergeRequest == null)
+                {
+                    logger.LogWarning("Cannot post review results - missing project or MR data");
+                    return;
+                }
+
+                logger.LogInformation("📝 POSTING RESULTS: Posting AI review results to GitLab MR {MrIid}: {FindingCount} findings, quality score {QualityScore}", 
+                    payload.MergeRequest.Iid, 
                     reviewResult.KeyFindings.Count, 
                     reviewResult.QualityScore);
+
+                // Build comprehensive review comments (potentially multiple)
+                var commentParts = BuildMultipleReviewComments(reviewResult);
                 
-                // Implementation would use GitLab API to post comment with review results
-                // await _gitLabService.PostMergeRequestCommentAsync(payload.Project.Id, payload.MergeRequest.Iid, reviewResult);
+                // Post multiple comments to show complete analysis without truncation
+                var successCount = 0;
+                for (int i = 0; i < commentParts.Count; i++)
+                {
+                    var success = await gitLabService.PostMergeRequestNoteAsync(
+                        payload.Project.Id, 
+                        payload.MergeRequest.Iid, 
+                        commentParts[i]);
+
+                    if (success)
+                    {
+                        successCount++;
+                        logger.LogInformation("✅ COMMENT POSTED: Posted AI review comment {Part}/{Total} to GitLab MR {MrIid}", 
+                            i + 1, commentParts.Count, payload.MergeRequest.Iid);
+                        
+                        // Add small delay between comments to ensure proper ordering
+                        if (i < commentParts.Count - 1)
+                            await Task.Delay(500);
+                    }
+                    else
+                    {
+                        logger.LogWarning("❌ COMMENT FAILED: Failed to post AI review comment {Part}/{Total} to GitLab MR {MrIid}", 
+                            i + 1, commentParts.Count, payload.MergeRequest.Iid);
+                    }
+                }
+
+                if (successCount == commentParts.Count)
+                {
+                    logger.LogInformation("✅ ALL POSTED: Successfully posted all {Count} AI review comments to GitLab MR {MrIid}", 
+                        successCount, payload.MergeRequest.Iid);
+                }
+                else
+                {
+                    logger.LogWarning("❌ PARTIAL POSTING: Posted only {SuccessCount}/{TotalCount} AI review comments to GitLab MR {MrIid}", 
+                        successCount, commentParts.Count, payload.MergeRequest.Iid);
+                }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to post review results to GitLab for MR {MrIid}", 
+                logger.LogError(ex, "❌ ERROR POSTING: Exception while posting review results to GitLab MR {MrIid}", 
                     payload.MergeRequest?.Iid);
             }
         }
+
+        private List<string> BuildMultipleReviewComments(MultiAgentReviewResult reviewResult)
+        {
+            var comments = new List<string>();
+            const int maxCommentLength = 4000; // Safe limit for GitLab comments
+
+            // Part 1: Summary and Agent Results
+            var summaryComment = new StringBuilder();
+            summaryComment.AppendLine("🤖 **AI Code Review Results**");
+            summaryComment.AppendLine();
+            summaryComment.AppendLine("✅ **Analysis Completed Successfully!**");
+            summaryComment.AppendLine();
+            summaryComment.AppendLine("📊 **Summary**");
+            summaryComment.AppendLine($"- **Quality Score**: {reviewResult.QualityScore}/100");
+            summaryComment.AppendLine($"- **Findings**: {reviewResult.KeyFindings.Count} items");
+            summaryComment.AppendLine($"- **Agent Results**: {reviewResult.AgentResults.Count} agents analyzed");
+            summaryComment.AppendLine($"- **Analysis Time**: {DateTime.UtcNow:HH:mm} UTC");
+            summaryComment.AppendLine();
+
+            if (reviewResult.AgentResults.Any())
+            {
+                summaryComment.AppendLine("🤖 **Multi-Agent Analysis**");
+                foreach (var agent in reviewResult.AgentResults)
+                {
+                    var emoji = GetAgentEmoji(agent.AgentType.ToString());
+                    summaryComment.AppendLine($"{emoji} **{agent.AgentType}** - Confidence: {agent.ConfidenceScore:F1}/10");
+                }
+                summaryComment.AppendLine();
+            }
+
+            summaryComment.AppendLine("---");
+            comments.Add(summaryComment.ToString());
+
+            // Part 2+: Key Findings (split into chunks)
+            if (reviewResult.KeyFindings.Any())
+            {
+                var findingsChunks = ChunkFindings(reviewResult.KeyFindings, maxCommentLength);
+                for (int i = 0; i < findingsChunks.Count; i++)
+                {
+                    var findingsComment = new StringBuilder();
+                    findingsComment.AppendLine($"🔍 **Key Findings (Part {i + 2})** ");
+                    findingsComment.AppendLine();
+                    
+                    foreach (var finding in findingsChunks[i])
+                    {
+                        findingsComment.AppendLine($"- {finding}");
+                    }
+                    findingsComment.AppendLine();
+                    findingsComment.AppendLine("---");
+                    comments.Add(findingsComment.ToString());
+                }
+            }
+
+            // Final Part: Recommendations
+            if (reviewResult.PriorityRecommendations.Any())
+            {
+                var recComment = new StringBuilder();
+                recComment.AppendLine($"💡 **Recommendations (Part {comments.Count + 1})**");
+                recComment.AppendLine();
+                
+                foreach (var rec in reviewResult.PriorityRecommendations.Take(10))
+                {
+                    recComment.AppendLine($"- {rec}");
+                }
+                recComment.AppendLine();
+                recComment.AppendLine("---");
+                comments.Add(recComment.ToString());
+            }
+
+            // Update part numbers in all comments
+            for (int i = 0; i < comments.Count; i++)
+            {
+                var totalParts = comments.Count;
+                var partNumber = i + 1;
+                comments[i] = comments[i].Replace("---", $"*Generated by MCP AI Code Review System - Part {partNumber}/{totalParts}*");
+            }
+
+            return comments;
+        }
+
+        private List<List<string>> ChunkFindings(List<string> findings, int maxLength)
+        {
+            var chunks = new List<List<string>>();
+            var currentChunk = new List<string>();
+            var currentLength = 0;
+
+            foreach (var finding in findings)
+            {
+                var findingLength = finding.Length + 4; // "- " + finding + "\n"
+                
+                if (currentLength + findingLength > maxLength - 500 && currentChunk.Any()) // Leave space for header/footer
+                {
+                    chunks.Add(currentChunk);
+                    currentChunk = new List<string>();
+                    currentLength = 0;
+                }
+                
+                currentChunk.Add(finding);
+                currentLength += findingLength;
+            }
+            
+            if (currentChunk.Any())
+            {
+                chunks.Add(currentChunk);
+            }
+
+            return chunks;
+        }
+
+        private string BuildReviewComment(MultiAgentReviewResult reviewResult)
+        {
+            var comment = new StringBuilder();
+            
+            comment.AppendLine("🤖 **AI Code Review Results**");
+            comment.AppendLine();
+            comment.AppendLine("✅ **Analysis Completed Successfully!**");
+            comment.AppendLine();
+            comment.AppendLine("📊 **Summary**");
+            comment.AppendLine($"- **Quality Score**: {reviewResult.QualityScore}/100");
+            comment.AppendLine($"- **Findings**: {reviewResult.KeyFindings.Count} items");
+            comment.AppendLine($"- **Agent Results**: {reviewResult.AgentResults.Count} agents analyzed");
+            comment.AppendLine($"- **Analysis Time**: {DateTime.UtcNow:HH:mm} UTC");
+            comment.AppendLine();
+
+            if (reviewResult.AgentResults.Any())
+            {
+                comment.AppendLine("🤖 **Multi-Agent Analysis**");
+                foreach (var agent in reviewResult.AgentResults)
+                {
+                    var emoji = GetAgentEmoji(agent.AgentType.ToString());
+                    comment.AppendLine($"{emoji} **{agent.AgentType}** - Confidence: {agent.ConfidenceScore:F1}/10");
+                }
+                comment.AppendLine();
+            }
+
+            if (reviewResult.KeyFindings.Any())
+            {
+                comment.AppendLine("🔍 **Key Findings**");
+                foreach (var finding in reviewResult.KeyFindings.Take(5)) // Top 5 findings only
+                {
+                    // Truncate long findings to prevent GitLab truncation
+                    var truncatedFinding = finding.Length > 120 ? 
+                        finding.Substring(0, 117) + "..." : finding;
+                    comment.AppendLine($"- {truncatedFinding}");
+                }
+                comment.AppendLine();
+            }
+            else
+            {
+                comment.AppendLine("✅ **No Issues Found**");
+                comment.AppendLine("Great job! The AI analysis found no significant issues with this code.");
+                comment.AppendLine();
+            }
+
+            if (reviewResult.PriorityRecommendations.Any())
+            {
+                comment.AppendLine("💡 **Recommendations**");
+                foreach (var rec in reviewResult.PriorityRecommendations.Take(3)) // Top 3 recommendations
+                {
+                    comment.AppendLine($"- {rec}");
+                }
+                comment.AppendLine();
+            }
+
+            comment.AppendLine("---");
+            comment.AppendLine("*Generated by MCP AI Code Review System*");
+            
+            // Ensure comment doesn't exceed GitLab's limits
+            var result = comment.ToString();
+            const int maxGitLabCommentLength = 5000; // Safe limit for GitLab comments
+            
+            if (result.Length > maxGitLabCommentLength)
+            {
+                result = result.Substring(0, maxGitLabCommentLength - 50) + "\n\n... (Analysis truncated for display)\n\n*Generated by MCP AI Code Review System*";
+            }
+            
+            return result;
+        }
+
+        private string GetAgentEmoji(string agentType) => agentType switch
+        {
+            "SecurityExpert" => "🔒",
+            "PerformanceAnalyst" => "⚡",
+            "CodeQualityReviewer" => "🎯",
+            "ArchitectureExpert" => "🏗️",
+            "TestingSpecialist" => "🧪",
+            _ => "🤖"
+        };
+
+        private string GetSeverityEmoji(string severity) => severity?.ToLower() switch
+        {
+            "critical" => "🚨",
+            "high" => "⚠️",
+            "medium" => "📝",
+            "low" => "💡",
+            _ => "ℹ️"
+        };
+
+        private int GetSeverityOrder(string severity) => severity?.ToLower() switch
+        {
+            "critical" => 1,
+            "high" => 2,
+            "medium" => 3,
+            "low" => 4,
+            _ => 5
+        };
     }
 
     /// <summary>
