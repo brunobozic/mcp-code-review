@@ -1,767 +1,177 @@
+version: '3.8'
+
 services:
-  # =============================================================================
-  # MCP Code Review Server - Main Application
-  # =============================================================================
-  mcp-server:
-    build: 
-      context: .
-      dockerfile: Dockerfile
-    container_name: mcp-code-review
-    ports:
-      - "5002:5000"    # Main MCP server port
-      - "5003:5001"    # Metrics port
-    volumes:
-      - ./data:/data
-      - ./logs:/var/log/mcp
+  # PostgreSQL Database for GitLab
+  postgresql:
+    image: postgres:15-alpine
+    container_name: gitlab-postgresql
+    restart: always
     environment:
-      # API Configuration
-      - GITHUB_TOKEN=${GITHUB_TOKEN}
-      - GITLAB_TOKEN=${GITLAB_TOKEN}
-      - CLAUDE_API_KEY=${CLAUDE_API_KEY}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - GITLAB_HOST=${GITLAB_HOST:-http://gitlab:80}
-      
-      # Monitoring & Logging
-      - SENTRY_DSN=${SENTRY_DSN}
-      - ELASTICSEARCH_URL=${ELASTICSEARCH_URL:-http://elasticsearch:9200}
-      - ASPNETCORE_ENVIRONMENT=${ASPNETCORE_ENVIRONMENT:-Development}
-      
-      # Application Settings
-      - ASPNETCORE_URLS=http://0.0.0.0:5000
-      - ASPNETCORE_HTTP_PORTS=5000
-      - DOTNET_USE_POLLING_FILE_WATCHER=true
-      - DOTNET_RUNNING_IN_CONTAINER=true
-      
-      # RAG Configuration
-      - CHROMADB_URL=http://chromadb:8000
-      - CHROMADB_AUTH_TOKEN=test-token
-      
-      # Logging Configuration
-      - Logging__LogLevel__Default=Information
-      - Logging__LogLevel__Microsoft.AspNetCore=Warning
-      - Logging__Console__FormatterName=Simple
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "ps aux | grep -v grep | grep -q 'Mcp.CodeReview' || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    depends_on:
-      elasticsearch:
-        condition: service_healthy
-      chromadb:
-        condition: service_healthy
-    networks:
-      - mcp-network
-
-  # =============================================================================
-  # Monitoring Stack
-  # =============================================================================
-  prometheus:
-    image: prom/prometheus:v2.48.1
-    container_name: mcp-prometheus
-    ports:
-      - "9090:9090"
+      POSTGRES_DB: ${POSTGRES_DB:-gitlab_production}
+      POSTGRES_USER: ${POSTGRES_USER:-gitlab}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gitlab_password}
     volumes:
-      - ./prometheus:/etc/prometheus:ro
-      - prometheus-data:/prometheus
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.console.libraries=/etc/prometheus/console_libraries'
-      - '--web.console.templates=/etc/prometheus/consoles'
-      - '--web.enable-lifecycle'
-      - '--storage.tsdb.retention.time=30d'
-      - '--web.enable-admin-api'
-      - '--log.level=info'
-      - '--log.format=logfmt'
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
-      interval: 15s
-      timeout: 3s
-      retries: 3
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    networks:
-      - mcp-network
-
-  grafana:
-    image: grafana/grafana:10.2.2
-    container_name: mcp-grafana
+      - postgresql_data:/var/lib/postgresql/data
     ports:
-      - "3000:3000"
-    volumes:
-      - grafana-storage:/var/lib/grafana
-      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
-      - ./grafana/datasources:/etc/grafana/provisioning/datasources:ro
-    environment:
-      # Security Configuration
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-SecureGrafanaPass123!}
-      - GF_SECURITY_SECRET_KEY=${GRAFANA_SECRET_KEY:-grafana-secret-key-change-me}
-      - GF_SECURITY_COOKIE_SECURE=false  # Set to true in production with HTTPS
-      - GF_SECURITY_STRICT_TRANSPORT_SECURITY=false  # Set to true in production
-      
-      # User Management
-      - GF_USERS_ALLOW_SIGN_UP=false
-      - GF_USERS_DEFAULT_THEME=dark
-      - GF_USERS_HOME_PAGE=/dashboards
-      
-      # Logging Configuration
-      - GF_LOG_MODE=console
-      - GF_LOG_LEVEL=info
-      - GF_LOG_CONSOLE_FORMAT=json
-      
-      # Server Configuration
-      - GF_SERVER_DOMAIN=localhost
-      - GF_SERVER_ROOT_URL=http://localhost:3000
-      - GF_SERVER_SERVE_FROM_SUB_PATH=false
-      
-      # Database (using built-in SQLite for simplicity)
-      - GF_DATABASE_TYPE=sqlite3
-      - GF_DATABASE_WAL=true
-      
-      # Analytics
-      - GF_ANALYTICS_REPORTING_ENABLED=false
-      - GF_ANALYTICS_CHECK_FOR_UPDATES=false
-      - GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES=false
-    restart: unless-stopped
+      - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/health || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    networks:
-      - mcp-network
-
-  # =============================================================================
-  # Logging Stack
-  # =============================================================================
-  fluentd:
-    build:
-      context: ./fluentd
-      dockerfile: Dockerfile
-    container_name: mcp-fluentd
-    ports:
-      - "24224:24224"
-      - "24224:24224/udp"
-    volumes:
-      - ./fluentd/conf:/fluentd/etc:ro
-      - ./logs:/var/log/containers
-      - fluentd-buffer:/var/log/fluentd-buffers
-    environment:
-      - FLUENTD_CONF=fluent.conf
-      - FLUENTD_OPT=-v
-    user: root
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "pgrep -f fluentd && netstat -tuln | grep :24224 || exit 1"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-gitlab}"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 30s
-    depends_on:
-      elasticsearch:
-        condition: service_healthy
-    networks:
-      - mcp-network
 
-  elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.3
-    container_name: mcp-elasticsearch
-    environment:
-      # Cluster Configuration
-      - discovery.type=single-node
-      - cluster.name=mcp-elasticsearch
-      - node.name=mcp-es-node
-      
-      # Memory Configuration
-      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
-      - bootstrap.memory_lock=true
-      
-      # Security Configuration (disabled for development)
-      - xpack.security.enabled=false
-      - xpack.security.enrollment.enabled=false
-      - xpack.security.http.ssl.enabled=false
-      - xpack.security.transport.ssl.enabled=false
-      
-      # Performance Configuration
-      - cluster.routing.allocation.disk.threshold_enabled=false
-      - action.destructive_requires_name=true
-      - indices.query.bool.max_clause_count=2048
-      
-      # Logging Configuration
-      - logger.level=INFO
-      - logger.org.elasticsearch.discovery=WARN
+  # Redis for GitLab
+  redis:
+    image: redis:7-alpine
+    container_name: gitlab-redis
+    restart: always
+    command: redis-server --requirepass ${REDIS_PASSWORD:-redis_password}
     volumes:
-      - elasticsearch-data:/usr/share/elasticsearch/data
+      - redis_data:/data
     ports:
-      - "9200:9200"
-    restart: unless-stopped
+      - "6379:6379"
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s || exit 1"]
-      interval: 30s
-      timeout: 10s
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
       retries: 5
-      start_period: 60s
-    ulimits:
-      memlock:
-        soft: -1
-        hard: -1
-      nofile:
-        soft: 65536
-        hard: 65536
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    networks:
-      - mcp-network
 
-  kibana:
-    image: docker.elastic.co/kibana/kibana:8.11.3
-    container_name: mcp-kibana
-    environment:
-      # Elasticsearch Configuration
-      - ELASTICSEARCH_URL=http://elasticsearch:9200
-      - ELASTICSEARCH_HOSTS=["http://elasticsearch:9200"]
-      
-      # Server Configuration
-      - SERVER_NAME=mcp-kibana
-      - SERVER_HOST=0.0.0.0
-      - SERVER_PORT=5601
-      - SERVER_BASEPATH=""
-      
-      # Logging Configuration
-      - LOGGING_ROOT_LEVEL=info
-      - LOGGING_LOGGERS='[{"name":"elasticsearch","level":"warn"}]'
-      
-      # Security Configuration (disabled for development)
-      - XPACK_SECURITY_ENABLED=false
-      - XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY=kibana-encryption-key-32-chars-long
-      
-      # Performance Configuration
-      - NODE_OPTIONS="--max-old-space-size=1024"
-    ports:
-      - "5601:5601"
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:5601/api/status || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
-    logging:
-      driver: fluentd
-      options:
-        fluentd-address: fluentd:24224
-        tag: logging.kibana
-        fluentd-retry-wait: "1s"
-        fluentd-max-retries: "3"
-    depends_on:
-      elasticsearch:
-        condition: service_healthy
-      fluentd:
-        condition: service_healthy
-    networks:
-      - mcp-network
-
-  # =============================================================================
-  # GitLab for Repository Management and CI/CD
-  # =============================================================================
+  # GitLab CE
   gitlab:
-    image: gitlab/gitlab-ce:16.7.2-ce.0
-    container_name: mcp-gitlab
-    hostname: 'gitlab.mcp-review.local'
+    image: gitlab/gitlab-ce:17.7.0-ce.0
+    container_name: gitlab-ce
+    restart: unless-stopped
+    hostname: localhost
+    shm_size: 256m
     environment:
       GITLAB_OMNIBUS_CONFIG: |
-        # External URL Configuration
-        external_url 'http://localhost:8080'
+        # External URL configuration
+        external_url '${GITLAB_EXTERNAL_URL:-http://localhost:9191}'
+        
+        # PostgreSQL configuration (external database)
+        postgresql['enable'] = false
+        gitlab_rails['db_adapter'] = 'postgresql'
+        gitlab_rails['db_encoding'] = 'unicode'
+        gitlab_rails['db_host'] = 'postgresql'
+        gitlab_rails['db_port'] = 5432
+        gitlab_rails['db_database'] = '${POSTGRES_DB:-gitlab_production}'
+        gitlab_rails['db_username'] = '${POSTGRES_USER:-gitlab}'
+        gitlab_rails['db_password'] = '${POSTGRES_PASSWORD:-gitlab_password}'
+        gitlab_rails['db_pool'] = 10
+        
+        # Redis configuration (external cache)
+        redis['enable'] = false
+        gitlab_rails['redis_host'] = 'redis'
+        gitlab_rails['redis_port'] = 6379
+        gitlab_rails['redis_password'] = '${REDIS_PASSWORD:-redis_password}'
+        gitlab_rails['redis_database'] = 0
+        
+        # Core GitLab settings
         gitlab_rails['gitlab_shell_ssh_port'] = 2222
-        
-        # Initial Configuration
         gitlab_rails['initial_root_password'] = '${GITLAB_ROOT_PASSWORD:-Adm1nP@ssw0rd2025!}'
-        gitlab_rails['store_initial_root_password'] = false
-        gitlab_rails['display_initial_root_password'] = false
-        gitlab_rails['initial_shared_runners_registration_token'] = 'secure-runner-token-12345'
+        gitlab_rails['time_zone'] = 'UTC'
         
-        # Production-Grade Server Configuration
-        nginx['listen_port'] = 80
-        nginx['listen_https'] = false
-        nginx['client_max_body_size'] = '1024m'
-        nginx['worker_processes'] = 'auto'
-        nginx['worker_connections'] = 2048
-        nginx['keepalive_timeout'] = 75
-        nginx['proxy_read_timeout'] = 3600
-        nginx['proxy_connect_timeout'] = 300
-        nginx['proxy_send_timeout'] = 300
-        nginx['real_ip_header'] = 'X-Real-IP'
-        nginx['real_ip_recursive'] = 'on'
+        # Puma web server configuration (production settings)
+        puma['enable'] = true
+        puma['worker_processes'] = 2
+        puma['min_threads'] = 4
+        puma['max_threads'] = 4
+        puma['worker_timeout'] = 60
+        puma['per_worker_max_memory_mb'] = 1024
         
-        # Production-Grade Performance Settings
-        unicorn['worker_processes'] = 4
-        unicorn['worker_timeout'] = 60
-        unicorn['worker_memory_limit_min'] = "1024 * 1 << 20"
-        unicorn['worker_memory_limit_max'] = "1280 * 1 << 20"
-        sidekiq['max_concurrency'] = 25
-        sidekiq['min_concurrency'] = 5
-        sidekiq['timeout'] = 25
+        # Sidekiq background job processing
+        sidekiq['enable'] = true
+        sidekiq['max_concurrency'] = 10
         
-        # Production-Grade Database Configuration
-        postgresql['shared_buffers'] = "512MB"
-        postgresql['max_connections'] = 200
-        postgresql['effective_cache_size'] = "1GB"
-        postgresql['maintenance_work_mem'] = "128MB"
-        postgresql['checkpoint_completion_target'] = 0.9
-        postgresql['wal_buffers'] = "16MB"
-        postgresql['default_statistics_target'] = 100
-        postgresql['random_page_cost'] = 1.1
-        postgresql['effective_io_concurrency'] = 200
-        postgresql['work_mem'] = "8MB"
-        postgresql['huge_pages'] = 'try'
-        postgresql['max_worker_processes'] = 8
-        postgresql['max_parallel_workers_per_gather'] = 4
-        postgresql['max_parallel_workers'] = 8
-        postgresql['max_parallel_maintenance_workers'] = 4
-        
-        # Production-Grade Redis Configuration
-        redis['maxmemory'] = "512mb"
-        redis['maxmemory_policy'] = "allkeys-lru"
-        redis['timeout'] = 300
-        redis['tcp_keepalive'] = 300
-        redis['tcp_backlog'] = 511
-        redis['databases'] = 16
-        redis['save'] = [ "900 1", "300 10", "60 10000" ]
-        
-        # Memory Management & GC Optimization
-        gitlab_rails['env'] = {
-          'MALLOC_CONF' => 'dirty_decay_ms:1000,muzzy_decay_ms:1000',
-          'RUBY_GC_HEAP_GROWTH_FACTOR' => '1.1',
-          'RUBY_GC_MALLOC_LIMIT' => '16777216',
-          'RUBY_GC_MALLOC_LIMIT_MAX' => '33554432',
-          'RUBY_GC_OLDMALLOC_LIMIT' => '16777216',
-          'RUBY_GC_OLDMALLOC_LIMIT_MAX' => '134217728'
-        }
-        
-        # Production-Grade Security Settings
-        gitlab_rails['webhook_timeout'] = 30
-        gitlab_rails['max_request_duration_seconds'] = 60
-        gitlab_rails['rate_limit_requests_per_period'] = 1000
-        gitlab_rails['rate_limit_period'] = 60
-        gitlab_rails['auto_sign_in_with_provider'] = false
-        gitlab_rails['session_expire_delay'] = 10080  # 1 week
-        gitlab_rails['password_authentication_enabled'] = true
-        gitlab_rails['signin_enabled'] = true
-        gitlab_rails['signup_enabled'] = false  # Disable public signups
-        gitlab_rails['gravatar_enabled'] = false
-        gitlab_rails['usage_ping_enabled'] = false
-        
-        # Production-Grade Git Configuration
-        gitlab_rails['git_timeout'] = 3600
-        gitaly['configuration'] = {
-          storage: [
-            {
-              name: 'default',
-              path: '/var/opt/gitlab/git-data/repositories'
-            }
-          ]
-        }
-        
-        # Production-Grade Backup Configuration
-        gitlab_rails['backup_keep_time'] = 2592000  # 30 days
-        gitlab_rails['backup_archive_permissions'] = 0640
-        gitlab_rails['backup_multipart_chunk_size'] = 104857600  # 100MB
-        gitlab_rails['backup_upload_connection'] = false
-        gitlab_rails['backup_upload_remote_directory'] = ''
-        
-        # Production-Grade Logging
-        logging['logrotate_frequency'] = "daily"
-        logging['logrotate_maxsize'] = "200MB"
-        logging['logrotate_rotate'] = 30
-        logging['svlogd_size'] = 200 * 1024 * 1024  # 200MB
-        logging['svlogd_num'] = 30
-        nginx['error_log_level'] = "error"
-        nginx['access_log_format'] = 'gitlab_access'
-        gitlab_rails['log_level'] = 'info'
-        
-        # Production-Grade Monitoring (using external stack)
-        prometheus_monitoring['enable'] = false
-        grafana['enable'] = false
-        gitlab_exporter['enable'] = false
-        node_exporter['enable'] = false
-        
-        # Production-Grade Registry Configuration
-        registry_external_url 'http://localhost:5050'
-        gitlab_rails['registry_enabled'] = true
-        registry['storage'] = {
-          's3' => {
-            'accesskey' => 'AKIAKIAKI',
-            'secretkey' => 'secret123',
-            'bucket' => 'gitlab-registry-bucket',
-            'region' => 'us-west-2'
-          },
-          'cache' => {
-            'blobdescriptor' => 'inmemory'
-          },
-          'delete' => {
-            'enabled' => true
-          },
-          'redirect' => {
-            'disable' => false
-          }
-        }
-        
-        # Production-Grade Repository Settings
-        gitlab_rails['repository_downloads_path'] = '/var/opt/gitlab/gitlab-rails/tmp/repositories'
-        gitlab_rails['repository_archive_cache_worker_concurrency'] = 2
-        gitlab_rails['artifacts_enabled'] = true
-        gitlab_rails['artifacts_path'] = '/var/opt/gitlab/gitlab-rails/shared/artifacts'
-        gitlab_rails['lfs_enabled'] = true
-        gitlab_rails['lfs_storage_path'] = '/var/opt/gitlab/gitlab-rails/shared/lfs-objects'
-        
-        # Production-Grade CI/CD Configuration
-        gitlab_rails['artifacts_expire_in'] = '30 days'
-        gitlab_rails['gitlab_default_projects_features_builds'] = true
-        gitlab_rails['gitlab_default_projects_features_container_registry'] = true
-        gitlab_rails['pipeline_schedule_worker_cron'] = "*/1 * * * *"
-        
-        # SMTP Configuration (disabled but ready for production)
-        gitlab_rails['smtp_enable'] = false
-        # gitlab_rails['smtp_address'] = "smtp.gmail.com"
-        # gitlab_rails['smtp_port'] = 587
-        # gitlab_rails['smtp_user_name'] = "your-email@gmail.com"
-        # gitlab_rails['smtp_password'] = "your-password"
-        # gitlab_rails['smtp_domain'] = "smtp.gmail.com"
-        # gitlab_rails['smtp_authentication'] = "login"
-        # gitlab_rails['smtp_enable_starttls_auto'] = true
-        # gitlab_rails['smtp_tls'] = false
-        
-        # Production-Grade Pages Configuration (disabled for now)
-        pages_external_url 'http://localhost:8090'
-        gitlab_pages['enable'] = false
-        # gitlab_pages['inplace_chroot'] = true
-        # gitlab_pages['access_control'] = true
-        
-        # Production-Grade Gitaly Configuration
+        # Gitaly Git repository storage service (simplified)
         gitaly['enable'] = true
-        gitaly['dir'] = '/var/opt/gitlab/gitaly'
-        gitaly['log_directory'] = '/var/log/gitlab/gitaly'
-        gitaly['bin_path'] = '/opt/gitlab/embedded/bin/gitaly'
-        gitaly['env_directory'] = '/opt/gitlab/etc/gitaly/env'
-        gitaly['env'] = {
-          'PATH' => "/opt/gitlab/bin:/opt/gitlab/embedded/bin:/bin:/usr/bin",
-          'HOME' => '/var/opt/gitlab'
-        }
         
-        # Production-Grade Puma Configuration (Alternative to Unicorn)
-        puma['enable'] = false  # Keep Unicorn for now
-        # puma['ha'] = true
-        # puma['worker_processes'] = 4
-        # puma['min_threads'] = 4
-        # puma['max_threads'] = 16
-        # puma['worker_timeout'] = 60
-        # puma['worker_boot_timeout'] = 60
+        # Security and monitoring settings
+        gitlab_rails['monitoring_whitelist'] = ['127.0.0.1/32', '::1/128']
+        gitlab_rails['webhook_timeout'] = 30
+        gitlab_rails['webhook_count_limit'] = 100
         
-        # Production-Grade Caching
-        gitlab_rails['redis_cache_instance'] = 'redis://redis:6379/0'
-        gitlab_rails['redis_queues_instance'] = 'redis://redis:6379/0'
-        gitlab_rails['redis_shared_state_instance'] = 'redis://redis:6379/0'
+        # Project and feature defaults
+        gitlab_rails['gitlab_default_projects_features_issues'] = true
+        gitlab_rails['gitlab_default_projects_features_merge_requests'] = true
+        gitlab_rails['gitlab_default_projects_features_wiki'] = true
+        gitlab_rails['gitlab_default_projects_features_snippets'] = true
+        gitlab_rails['gitlab_default_projects_features_builds'] = true
+        gitlab_rails['gitlab_default_projects_features_container_registry'] = false
         
-        # Production-Grade Rate Limiting
-        gitlab_rails['rack_attack_git_basic_auth'] = {
-          'enabled' => true,
-          'ip_whitelist' => [],
-          'maxretry' => 10,
-          'findtime' => 60,
-          'bantime' => 3600
-        }
+        # Essential GitLab services only - no deprecated options
+        # Note: Removed all deprecated service configurations for GitLab 17.7.0 compatibility
+        
+        # Basic security settings
+        gitlab_rails['session_expire_delay'] = 10080
+        
+        # Essential performance settings
+        gitlab_rails['artifacts_enabled'] = true
+        gitlab_rails['backup_keep_time'] = 604800
     ports:
-      - '8080:80'
-      - '2222:22'
-      - '5050:5050'
+      - "${GITLAB_PORT:-9191}:80"
+      - "2222:22"
     volumes:
-      - gitlab-config:/etc/gitlab
-      - gitlab-logs:/var/log/gitlab
-      - gitlab-data:/var/opt/gitlab
-    restart: unless-stopped
-    shm_size: '256m'
+      - gitlab_config:/etc/gitlab
+      - gitlab_logs:/var/log/gitlab
+      - gitlab_data:/var/opt/gitlab
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2'
+        reservations:
+          memory: 2G
+          cpus: '1'
+    ulimits:
+      sigpending: 62793
+      nproc: 131072
+      nofile: 60000
+      core: 0
     healthcheck:
-      test: ["CMD", "/opt/gitlab/bin/gitlab-healthcheck", "--fail", "--max-time", "10"]
+      test: ["CMD-SHELL", "curl -f http://localhost/-/health || exit 1"]
       interval: 60s
       timeout: 30s
       retries: 5
       start_period: 300s
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    depends_on:
-      - gitlab-postgres
-      - gitlab-redis
-    networks:
-      - mcp-network
 
-  gitlab-postgres:
-    image: postgres:15.5-alpine
-    container_name: mcp-gitlab-postgres
-    environment:
-      # Database Configuration
-      - POSTGRES_DB=gitlabhq_production
-      - POSTGRES_USER=gitlab
-      - POSTGRES_PASSWORD=${GITLAB_POSTGRES_PASSWORD:-SecureGitLabDBPass123!}
-      
-      # Performance Configuration
-      - POSTGRES_INITDB_ARGS=--data-checksums
-      
-      # Logging Configuration
-      - POSTGRES_LOGGING_COLLECTOR=on
-      - POSTGRES_LOG_DESTINATION=stderr
-      - POSTGRES_LOG_STATEMENT=none
-      - POSTGRES_LOG_MIN_DURATION_STATEMENT=1000
-    volumes:
-      - gitlab-postgres-data:/var/lib/postgresql/data
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U gitlab -d gitlabhq_production"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    networks:
-      - mcp-network
-
-  gitlab-redis:
-    image: redis:7.2.3-alpine
-    container_name: mcp-gitlab-redis
-    command: >
-      redis-server
-      --appendonly yes
-      --appendfsync everysec
-      --auto-aof-rewrite-percentage 100
-      --auto-aof-rewrite-min-size 64mb
-      --maxmemory 256mb
-      --maxmemory-policy allkeys-lru
-      --timeout 300
-      --tcp-keepalive 60
-      --loglevel notice
-    volumes:
-      - gitlab-redis-data:/data
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    networks:
-      - mcp-network
-
-  # =============================================================================
-  # RAG Vector Database - ChromaDB
-  # =============================================================================
+  # ChromaDB Vector Database
   chromadb:
-    image: chromadb/chroma:0.4.24
-    container_name: mcp-chromadb
+    image: chromadb/chroma:0.4.22
+    container_name: chromadb
+    restart: always
     environment:
-      # Basic Configuration
-      - ANONYMIZED_TELEMETRY=FALSE
-      - IS_PERSISTENT=TRUE
-      - PERSIST_DIRECTORY=/chroma/chroma
-      - CHROMA_HOST=0.0.0.0
-      - CHROMA_PORT=8000
-      - CHROMA_AUTH_PROVIDER=chromadb.auth.token.TokenAuthProvider
-      - CHROMA_AUTH_CREDENTIALS=test-token
+      CHROMA_HOST: ${CHROMADB_HOST:-0.0.0.0}
+      CHROMA_PORT: ${CHROMADB_PORT:-19193}
     ports:
-      - "8000:8000"  # HTTP API
-      - "8001:8001"  # gRPC API (optional)
+      - "${CHROMADB_PORT:-19193}:8000"
     volumes:
-      - chromadb-data:/chroma/chroma
-      - ./rag-data/collections:/chroma/collections:ro  # Pre-seeded collections
-    restart: unless-stopped
+      - chromadb_data:/chroma/chroma
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; import json; response = urllib.request.urlopen('http://localhost:8000/api/v1/heartbeat'); data = json.loads(response.read()); exit(0 if 'nanosecond heartbeat' in data else 1)\""]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    networks:
-      - mcp-network
-
-  # =============================================================================
-  # SonarQube for Code Quality Analysis
-  # =============================================================================
-  sonarqube:
-    image: sonarqube:10.3-community
-    container_name: mcp-sonarqube
-    environment:
-      # Database Configuration
-      - SONAR_JDBC_URL=jdbc:postgresql://sonar-postgres:5432/sonar
-      - SONAR_JDBC_USERNAME=sonar
-      - SONAR_JDBC_PASSWORD=${SONAR_POSTGRES_PASSWORD:-SecureSonarDBPass123!}
-      
-      # Server Configuration
-      - SONAR_WEB_HOST=0.0.0.0
-      - SONAR_WEB_PORT=9000
-      - SONAR_WEB_CONTEXT=/
-      
-      # JVM Configuration
-      - SONAR_CE_JAVAOPTS=-Xmx1g -XX:+HeapDumpOnOutOfMemoryError
-      - SONAR_WEB_JAVAOPTS=-Xmx1g -XX:+HeapDumpOnOutOfMemoryError
-      
-      # Logging Configuration
-      - SONAR_LOG_LEVEL=INFO
-      - SONAR_LOG_JSONOUTPUT=true
-      
-      # Security Configuration
-      - SONAR_FORCEAUTHENTICATION=true
-      - SONAR_SECURITY_REALM=sonar
-      
-      # Performance Configuration
-      - SONAR_SEARCH_JAVAOPTS=-Xmx512m
-    ports:
-      - "9000:9000"
-    volumes:
-      - sonarqube-data:/opt/sonarqube/data
-      - sonarqube-logs:/opt/sonarqube/logs
-      - sonarqube-extensions:/opt/sonarqube/extensions
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9000/api/system/status"]
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/api/v1/heartbeat || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 120s
-    logging:
-      driver: fluentd
-      options:
-        fluentd-address: fluentd:24224
-        tag: sonarqube.main
-        fluentd-retry-wait: "1s"
-        fluentd-max-retries: "3"
-    depends_on:
-      sonar-postgres:
-        condition: service_healthy
-      fluentd:
-        condition: service_healthy
-    networks:
-      - mcp-network
 
-  sonar-postgres:
-    image: postgres:15.5-alpine
-    container_name: mcp-sonar-postgres
-    environment:
-      # Database Configuration
-      - POSTGRES_DB=sonar
-      - POSTGRES_USER=sonar
-      - POSTGRES_PASSWORD=${SONAR_POSTGRES_PASSWORD:-SecureSonarDBPass123!}
-      
-      # Performance Configuration
-      - POSTGRES_INITDB_ARGS=--data-checksums
-      
-      # Logging Configuration
-      - POSTGRES_LOGGING_COLLECTOR=on
-      - POSTGRES_LOG_DESTINATION=stderr
-      - POSTGRES_LOG_STATEMENT=none
-      - POSTGRES_LOG_MIN_DURATION_STATEMENT=1000
-    volumes:
-      - sonar-postgres-data:/var/lib/postgresql/data
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U sonar -d sonar"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    logging:
-      driver: fluentd
-      options:
-        fluentd-address: fluentd:24224
-        tag: sonarqube.postgres
-        fluentd-retry-wait: "1s"
-        fluentd-max-retries: "3"
-    depends_on:
-      fluentd:
-        condition: service_healthy
-    networks:
-      - mcp-network
-
-# =============================================================================
-# Volumes for Data Persistence
-# =============================================================================
 volumes:
-  # Application Data
-  grafana-storage:
+  postgresql_data:
     driver: local
-  elasticsearch-data:
+  redis_data:
     driver: local
-  prometheus-data:
+  gitlab_config:
     driver: local
-  fluentd-buffer:
+  gitlab_logs:
     driver: local
-    
-  # GitLab Data
-  gitlab-config:
+  gitlab_data:
     driver: local
-  gitlab-logs:
-    driver: local
-  gitlab-data:
-    driver: local
-  gitlab-postgres-data:
-    driver: local
-  gitlab-redis-data:
-    driver: local
-  
-  # SonarQube Data
-  sonarqube-data:
-    driver: local
-  sonarqube-logs:
-    driver: local
-  sonarqube-extensions:
-    driver: local
-  sonar-postgres-data:
-    driver: local
-  
-  # RAG Vector Database Data
-  chromadb-data:
+  chromadb_data:
     driver: local
 
-# =============================================================================
-# Networks for Service Communication
-# =============================================================================
 networks:
-  mcp-network:
+  default:
     driver: bridge
-    name: mcp-network
-    ipam:
-      driver: default
-      config:
-        - subnet: 172.25.0.0/16
-          gateway: 172.25.0.1

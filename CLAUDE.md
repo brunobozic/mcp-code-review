@@ -1,5 +1,30 @@
 # CLAUDE.md
 
+## 🚨 CRITICAL INSTRUCTIONS - NO EXCEPTIONS
+
+**NO DEMO MODE, NO MOCKS, NO FAKES, NO BYPASSES, EVER**
+- DO NOT *ever* MOCK AWAY AI INTERACTIONS
+- DO NOT *ever* MOCK AWAY GITLAB
+- DO NOT *ever* MOCK AWAY MCP
+- Do not cheat
+- Do not skip doing work
+- Always do root cause analysis and apply root cause fixes
+- Undo demo mode, we will never do any type of simple or demo mode
+- We will ALWAYS use actual gitlab, actual mcp, actual AI calls
+- Nothing will ever be mocked, simplified
+- The GitLab token must be fixed and automated away
+
+**GITLAB PROFESSIONAL STANDARDS - MANDATORY**
+- ✅ **NO SIMPLE/LIGHTWEIGHT/DEMO GITLAB** - Must be production-grade enterprise setup
+- ✅ **BEST DEVOPS PRACTICES** - Full professional deployment patterns
+- ✅ **BEST IAC (Infrastructure as Code)** - Automated, version-controlled infrastructure
+- ✅ **BEST GITOPS** - Configuration managed through code
+- ✅ **INDUSTRY STANDARDS** - Follow official GitLab Omnibus production guidelines
+- ✅ **ROOT CAUSE ANALYSIS** - Proper diagnosis and professional fixes
+- ❌ **NO CUTTING CORNERS** - Never bypass difficult configuration issues
+- ⚡ **GITLAB MUST BE STABLE** - Professional reliability standards required
+- 🔧 **CURRENT CONFIGURATIONS ONLY** - Use GitLab 17.7.0+ supported options
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## 🎯 PROPER TESTING METHODOLOGY - MANDATORY APPROACH
