@@ -33,7 +33,7 @@ namespace Mcp.CodeReview.GitLab
             _logger = logger;
             _aiReviewService = aiReviewService;
             
-            _gitLabUrl = _configuration["GITLAB_HOST"] ?? "http://localhost:8080";
+            _gitLabUrl = _configuration["GITLAB_HOST"] ?? "http://localhost:9191";
             _accessToken = _configuration["GITLAB_TOKEN"] ?? throw new InvalidOperationException("GITLAB_TOKEN is required");
             
             _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {_accessToken}");
@@ -379,11 +379,6 @@ namespace Mcp.CodeReview.GitLab
         {
             try
             {
-                // DEMO MODE: Save comments to file to demonstrate multiple comments working
-                var commentFile = $"/tmp/gitlab-comment-{projectId}-{mrIid}-{DateTime.UtcNow:yyyyMMdd-HHmmss-fff}.md";
-                await File.WriteAllTextAsync(commentFile, body);
-                _logger.LogInformation("💾 DEMO: Comment saved to {CommentFile}", commentFile);
-
                 var noteData = new { body };
                 var json = JsonSerializer.Serialize(noteData);
                 var content = new StringContent(json, Encoding.UTF8, "application/json");
@@ -398,19 +393,13 @@ namespace Mcp.CodeReview.GitLab
                 else
                 {
                     _logger.LogError("Failed to post note: {StatusCode} - {Content}", response.StatusCode, await response.Content.ReadAsStringAsync());
-                    
-                    // DEMO MODE: Return success for demo even if GitLab fails
-                    _logger.LogInformation("🔧 DEMO MODE: Treating as success for demonstration");
-                    return true;
+                    return false;
                 }
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error posting merge request note");
-                
-                // DEMO MODE: Return success for demo even if exception occurs
-                _logger.LogInformation("🔧 DEMO MODE: Treating exception as success for demonstration");
-                return true;
+                return false;
             }
         }
 

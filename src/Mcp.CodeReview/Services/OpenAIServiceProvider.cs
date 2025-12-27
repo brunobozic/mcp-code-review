@@ -191,11 +191,18 @@ public class OpenAIServiceProvider : IAIServiceProvider
     {
         if (!string.IsNullOrEmpty(_apiKey))
         {
+            // Clear existing authorization headers to avoid conflicts
+            _httpClient.DefaultRequestHeaders.Authorization = null;
             _httpClient.DefaultRequestHeaders.Authorization = 
                 new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _apiKey);
         }
         
-        _httpClient.DefaultRequestHeaders.Add("User-Agent", "MCP-CodeReview/1.0");
-        _httpClient.Timeout = TimeSpan.FromMinutes(2);
+        // Only add User-Agent if not already present
+        if (!_httpClient.DefaultRequestHeaders.Contains("User-Agent"))
+        {
+            _httpClient.DefaultRequestHeaders.Add("User-Agent", "MCP-CodeReview/1.0");
+        }
+        
+        // Timeout is already configured in Program.cs during HttpClient registration
     }
 }

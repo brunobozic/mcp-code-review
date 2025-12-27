@@ -19,7 +19,7 @@ public class ConsolidatedAIReviewSystem : IAIReviewService
     private readonly IAIServiceProvider _claudeService;
     private readonly IAgentOrchestrator _agentOrchestrator;
     private readonly ILogger<ConsolidatedAIReviewSystem> _logger;
-    // private readonly LearningRAGService? _learningRAGService;
+    private readonly LearningRAGService? _learningRAGService;
     private readonly RepositoryContextService? _repositoryContextService;
     
     // Enhanced frameworks for 2024 improvements
@@ -40,7 +40,7 @@ public class ConsolidatedAIReviewSystem : IAIReviewService
         DynamicAgentSelector dynamicAgentSelector,
         EnhancedConversationManager conversationManager,
         ILogger<ConsolidatedAIReviewSystem> logger,
-        // LearningRAGService? learningRAGService = null,
+        LearningRAGService? learningRAGService = null,
         RepositoryContextService? repositoryContextService = null)
     {
         _claudeService = aiServiceProvider ?? throw new ArgumentNullException(nameof(aiServiceProvider));
@@ -49,7 +49,7 @@ public class ConsolidatedAIReviewSystem : IAIReviewService
         _dynamicAgentSelector = dynamicAgentSelector ?? throw new ArgumentNullException(nameof(dynamicAgentSelector));
         _conversationManager = conversationManager ?? throw new ArgumentNullException(nameof(conversationManager));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        // _learningRAGService = learningRAGService;
+        _learningRAGService = learningRAGService;
         _repositoryContextService = repositoryContextService;
         
         _agentRegistry = new ConcurrentDictionary<AgentType, ISpecializedAgent>();
@@ -248,7 +248,7 @@ public class ConsolidatedAIReviewSystem : IAIReviewService
     /// <summary>
     /// Build comprehensive repository context for truly contextual analysis
     /// </summary>
-    private async Task<RepositoryContext> BuildRepositoryContextAsync(
+    private async Task<Models.RepositoryContext> BuildRepositoryContextAsync(
         CodeReviewRequest request,
         CancellationToken cancellationToken)
     {
@@ -259,39 +259,46 @@ public class ConsolidatedAIReviewSystem : IAIReviewService
             if (string.IsNullOrEmpty(projectId))
             {
                 _logger.LogWarning("No project ID provided, using limited context");
-                return new RepositoryContext();
+                return new Models.RepositoryContext();
             }
 
-            // Extract changed files if available
-            var changedFiles = ExtractChangedFiles(request);
+            // Use LearningRAGService to get enhanced repository context with SonarQube data
+            if (_learningRAGService != null)
+            {
+                _logger.LogInformation("🔄 RAG CONTEXT: Using LearningRAGService for enhanced context with SonarQube integration");
+                
+                var mergeRequestId = request.Metadata.GetValueOrDefault("mergeRequestIid")?.ToString();
+                var enhancedContext = await _learningRAGService.GetEnhancedRepositoryContextAsync(
+                    projectId, mergeRequestId, cancellationToken);
 
-            // Use repository context service to build full context  
-            var gitLabLogger = LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<GitLabService>();
-            var repoLogger = LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger<RepositoryContextService>();
+                _logger.LogInformation("🧠 ENHANCED CONTEXT: {Files} files, {Dependencies} dependencies, {Metrics} metrics, {Patterns} patterns",
+                    enhancedContext.Files.Count, enhancedContext.Dependencies.Count, 
+                    enhancedContext.QualityMetrics.Count, enhancedContext.HistoricalPatterns.Count);
+
+                // Convert to Models.RepositoryContext for compatibility
+                return enhancedContext.ToRepositoryContext();
+            }
+
+            _logger.LogInformation("🔄 RAG CONTEXT: Using basic repository context (LearningRAGService disabled)");
             
-            var contextService = new RepositoryContextService(
-                new GitLabService(gitLabLogger),
-                null, // Vector search service - would be properly injected in real system
-                repoLogger,
-                new HttpClient()
-            );
-
-            var context = await contextService.BuildRepositoryContextAsync(
-                projectId, changedFiles, cancellationToken);
-
-            _logger.LogInformation("Built repository context: {FileCount} files, {DependencyCount} dependencies, {PatternCount} historical patterns",
-                context.Structure.FilesByType.Values.Sum(list => list.Count),
-                context.Dependencies.Count,
-                context.HistoricalPatterns.Count);
-
-            return context;
+            // Fallback to basic context
+            return new Models.RepositoryContext
+            {
+                ProjectId = projectId,
+                ProjectName = projectId
+            };
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to build repository context, proceeding with limited context");
-            return new RepositoryContext();
+            return new Models.RepositoryContext 
+            { 
+                ProjectId = request.Metadata.GetValueOrDefault("projectId")?.ToString() ?? "unknown",
+                ProjectName = request.Metadata.GetValueOrDefault("projectId")?.ToString() ?? "unknown"
+            };
         }
     }
+
 
     private List<string>? ExtractChangedFiles(CodeReviewRequest request)
     {
