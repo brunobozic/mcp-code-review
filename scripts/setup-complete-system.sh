@@ -65,7 +65,7 @@ AI__PreferredProvider=OpenAI
 
 # GitLab Configuration
 GITLAB_HOST=http://localhost:${GITLAB_PORT}
-GITLAB_TOKEN=${GITLAB_TOKEN:-${GITLAB_TOKEN:-glpat-PLACEHOLDER}}
+GITLAB_TOKEN=\${GITLAB_TOKEN:-glpat-PLACEHOLDER-REPLACE-WITH-REAL-TOKEN}
 GITLAB_ROOT_PASSWORD=Adm1nP@ssw0rd2025!
 GITLAB_EXTERNAL_URL=http://localhost:${GITLAB_PORT}
 
@@ -251,7 +251,7 @@ create_gitlab_automation() {
 set -e
 
 GITLAB_URL="${GITLAB_HOST:-http://localhost:9191}"
-ROOT_TOKEN="${GITLAB_TOKEN:-${GITLAB_TOKEN:-${GITLAB_TOKEN:-glpat-PLACEHOLDER}}}"
+ROOT_TOKEN="\${GITLAB_TOKEN:-glpat-PLACEHOLDER-REPLACE-WITH-REAL-TOKEN}"
 
 log_info() { echo -e "\033[0;34m[INFO]\033[0m $1"; }
 log_success() { echo -e "\033[0;32m[SUCCESS]\033[0m $1"; }

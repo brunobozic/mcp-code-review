@@ -5,7 +5,7 @@
 set -e
 
 GITLAB_URL="${GITLAB_HOST:-http://localhost:9191}"
-ROOT_TOKEN="${GITLAB_TOKEN:-${GITLAB_TOKEN:-glpat-PLACEHOLDER}}"
+ROOT_TOKEN="\${GITLAB_TOKEN:-glpat-PLACEHOLDER-REPLACE-WITH-REAL-TOKEN}"
 
 log_info() { echo -e "\033[0;34m[INFO]\033[0m $1"; }
 log_success() { echo -e "\033[0;32m[SUCCESS]\033[0m $1"; }
