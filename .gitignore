@@ -94,6 +94,28 @@ docker-compose.override.yml
 # GitLab specific runtime data
 gitlab-config/.env
 gitlab-config/runtime/
+devops/data/gitlab/logs/
+devops/data/gitlab/data/
+devops/data/gitlab/config/
+devops/data/gitlab/simple-*/
+devops/data/gitlab/postgresql/
+devops/data/gitlab/redis/
+
+# GitLab Docker runtime directories
+devops/docker/gitlab-enterprise/
+devops/docker/gitlab-fresh/
+devops/docker/gitlab-*/data/
+devops/docker/gitlab-*/logs/
+devops/docker/gitlab-*/config/
+
+# Backup directories that accumulate over time
+*-backup/
+*-broken-backup/
+*-config-old/
+
+# Temporary test files
+test-*.json
+cookies.txt
 
 # Certificate files
 *.pem

@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  gitlab:
+    image: gitlab/gitlab-ce:16.7.2-ce.0
+    container_name: mcp-gitlab-simple
+    hostname: gitlab.mcp-review.local
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+      - "2222:22"
+    volumes:
+      - ../data/gitlab/config:/etc/gitlab
+      - ../data/gitlab/logs:/var/log/gitlab
+      - ../data/gitlab/data:/var/opt/gitlab
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://localhost:8080'
+        gitlab_rails['gitlab_shell_ssh_port'] = 2222
+        
+        # Simple, stable configuration using Puma (required for GitLab 16.x)
+        puma['worker_processes'] = 1
+        puma['worker_timeout'] = 60
+        puma['per_worker_max_memory_mb'] = 1024
+        
+        # Set max request duration to be smaller than worker timeout
+        gitlab_rails['max_request_duration_seconds'] = 55
+        
+        # Disable features that might cause issues
+        prometheus_monitoring['enable'] = false
+        gitlab_exporter['enable'] = false
+        node_exporter['enable'] = false
+        
+        # Basic resource limits
+        sidekiq['max_concurrency'] = 10
+        postgresql['max_connections'] = 100
+        
+        # Disable unnecessary services for testing
+        registry['enable'] = false
+        gitlab_kas['enable'] = false
+        gitlab_pages['enable'] = false
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost/-/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s

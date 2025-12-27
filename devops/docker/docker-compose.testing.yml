@@ -1,0 +1,271 @@
+version: '3.8'
+
+services:
+  # GitLab CE for testing
+  gitlab:
+    image: gitlab/gitlab-ce:16.7.0-ce.0
+    hostname: gitlab.local
+    container_name: mcp-gitlab
+    restart: always
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://gitlab.local:8080'
+        gitlab_rails['gitlab_shell_ssh_port'] = 2222
+        gitlab_rails['initial_root_password'] = 'mcptesting123'
+        # Reduce memory usage for testing
+        postgresql['shared_buffers'] = "256MB"
+        postgresql['max_worker_processes'] = 8
+        puma['worker_processes'] = 2
+        sidekiq['max_concurrency'] = 10
+        # Enable container registry
+        registry_external_url 'http://gitlab.local:5050'
+        gitlab_rails['registry_enabled'] = true
+        # Reduce startup time
+        gitlab_rails['auto_migrate'] = true
+    ports:
+      - '8080:80'    # GitLab web interface
+      - '2222:22'    # GitLab SSH
+      - '5050:5050'  # Container registry
+    volumes:
+      - gitlab_config:/etc/gitlab
+      - gitlab_logs:/var/log/gitlab
+      - gitlab_data:/var/opt/gitlab
+    networks:
+      - mcp_network
+    shm_size: '256m'
+    
+  # PostgreSQL for GitLab (external for better performance)
+  gitlab-postgres:
+    image: postgres:15-alpine
+    container_name: mcp-gitlab-postgres
+    restart: always
+    environment:
+      POSTGRES_DB: gitlabhq_production
+      POSTGRES_USER: gitlab
+      POSTGRES_PASSWORD: gitlabpass123
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - gitlab_postgres_data:/var/lib/postgresql/data
+    networks:
+      - mcp_network
+
+  # Redis for GitLab
+  gitlab-redis:
+    image: redis:7-alpine
+    container_name: mcp-gitlab-redis
+    restart: always
+    volumes:
+      - gitlab_redis_data:/data
+    networks:
+      - mcp_network
+    command: redis-server --appendonly yes
+
+  # SonarQube for static code analysis
+  sonarqube:
+    image: sonarqube:10.3-community
+    hostname: sonarqube.local
+    container_name: mcp-sonarqube
+    restart: always
+    depends_on:
+      - sonar-postgres
+    environment:
+      SONAR_JDBC_URL: jdbc:postgresql://sonar-postgres:5432/sonar
+      SONAR_JDBC_USERNAME: sonar
+      SONAR_JDBC_PASSWORD: sonarpass123
+      SONAR_ES_BOOTSTRAP_CHECKS_DISABLE: true
+    ports:
+      - '9000:9000'
+    volumes:
+      - sonarqube_data:/opt/sonarqube/data
+      - sonarqube_logs:/opt/sonarqube/logs
+      - sonarqube_extensions:/opt/sonarqube/extensions
+    networks:
+      - mcp_network
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 131072
+        hard: 131072
+    
+  # PostgreSQL for SonarQube
+  sonar-postgres:
+    image: postgres:15-alpine
+    container_name: mcp-sonar-postgres
+    restart: always
+    environment:
+      POSTGRES_DB: sonar
+      POSTGRES_USER: sonar
+      POSTGRES_PASSWORD: sonarpass123
+    volumes:
+      - sonar_postgres_data:/var/lib/postgresql/data
+    networks:
+      - mcp_network
+
+  # MCP Code Review Server
+  mcp-code-review:
+    build:
+      context: .
+      dockerfile: Dockerfile.production
+    container_name: mcp-code-review
+    restart: always
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Testing
+      - CLAUDE_API_KEY=${CLAUDE_API_KEY}
+      - GITLAB_HOST=http://gitlab.local:8080
+      - GITLAB_TOKEN=${GITLAB_TOKEN:-glpat-testing123}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - SENTRY_DSN=${SENTRY_DSN}
+      - SONARQUBE_HOST=http://sonarqube.local:9000
+      - SONARQUBE_TOKEN=${SONARQUBE_TOKEN:-squ_testing123}
+    ports:
+      - '5000:5000'  # MCP HTTP server
+      - '9090:9090'  # Metrics
+    volumes:
+      - ../data:/data
+      - ../data/logs:/var/log/mcp
+    networks:
+      - mcp_network
+    depends_on:
+      - gitlab
+      - prometheus
+      - elasticsearch
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Prometheus for metrics
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    container_name: mcp-prometheus
+    restart: always
+    ports:
+      - '9091:9090'
+    volumes:
+      - ../monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    networks:
+      - mcp_network
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+
+  # Grafana for dashboards
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: mcp-grafana
+    restart: always
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=mcpadmin123
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    ports:
+      - '3000:3000'
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ../monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ../monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    networks:
+      - mcp_network
+    depends_on:
+      - prometheus
+
+  # Elasticsearch for logging
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: mcp-elasticsearch
+    restart: always
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - '9200:9200'
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    networks:
+      - mcp_network
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  # Kibana for log visualization
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: mcp-kibana
+    restart: always
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - XPACK_SECURITY_ENABLED=false
+    ports:
+      - '5601:5601'
+    networks:
+      - mcp_network
+    depends_on:
+      - elasticsearch
+
+  # GitLab Runner for CI/CD testing
+  gitlab-runner:
+    image: gitlab/gitlab-runner:v16.7.0
+    container_name: mcp-gitlab-runner
+    restart: always
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - gitlab_runner_config:/etc/gitlab-runner
+    networks:
+      - mcp_network
+    depends_on:
+      - gitlab
+
+  # Test automation container
+  test-automation:
+    build:
+      context: ../infrastructure/testing
+      dockerfile: Dockerfile.testing
+    container_name: mcp-test-automation
+    restart: 'no'  # Run on demand
+    environment:
+      - GITLAB_URL=http://gitlab.local:8080
+      - GITLAB_TOKEN=${GITLAB_TOKEN:-glpat-testing123}
+      - MCP_URL=http://mcp-code-review:5000
+      - CLAUDE_API_KEY=${CLAUDE_API_KEY}
+    volumes:
+      - ../infrastructure/testing:/app/testing
+      - ../data/sample-projects:/app/sample-projects
+    networks:
+      - mcp_network
+    depends_on:
+      - gitlab
+      - mcp-code-review
+
+volumes:
+  gitlab_config:
+  gitlab_logs:
+  gitlab_data:
+  gitlab_postgres_data:
+  gitlab_redis_data:
+  gitlab_runner_config:
+  prometheus_data:
+  grafana_data:
+  elasticsearch_data:
+  sonarqube_data:
+  sonarqube_logs:
+  sonarqube_extensions:
+  sonar_postgres_data:
+
+networks:
+  mcp_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.25.0.0/16
