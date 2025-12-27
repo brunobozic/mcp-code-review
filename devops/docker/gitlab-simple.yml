@@ -1,0 +1,40 @@
+services:
+  gitlab:
+    image: gitlab/gitlab-ce:16.7.2-ce.0
+    container_name: mcp-gitlab-simple
+    restart: unless-stopped
+    ports:
+      - "9191:80"
+    volumes:
+      - ../data/gitlab/simple-config:/etc/gitlab
+      - ../data/gitlab/simple-logs:/var/log/gitlab  
+      - ../data/gitlab/simple-data:/var/opt/gitlab
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://localhost:9191'
+        
+        # Minimal Puma configuration  
+        puma['enable'] = true
+        puma['worker_processes'] = 1
+        puma['listen'] = '0.0.0.0'
+        puma['port'] = 8080
+        
+        # Basic Nginx
+        nginx['enable'] = true
+        
+        # Disable all monitoring
+        prometheus_monitoring['enable'] = false
+        node_exporter['enable'] = false  
+        redis_exporter['enable'] = false
+        postgres_exporter['enable'] = false
+        gitlab_exporter['enable'] = false
+        grafana['enable'] = false
+        alertmanager['enable'] = false
+        
+        # Minimal Sidekiq
+        sidekiq['max_concurrency'] = 3
+        
+        # Disable problematic features
+        gitlab_kas['enable'] = false
+        pages_nginx['enable'] = false
+        mattermost['enable'] = false

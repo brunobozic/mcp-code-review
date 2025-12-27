@@ -1,0 +1,35 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  # - "first_rules.yml"
+  # - "second_rules.yml"
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'mcp-code-review'
+    static_configs:
+      - targets: ['mcp-code-review:9090']
+    scrape_interval: 10s
+    metrics_path: '/metrics'
+
+  - job_name: 'gitlab'
+    static_configs:
+      - targets: ['gitlab.local:8080']
+    scrape_interval: 30s
+    metrics_path: '/-/metrics'
+    scheme: http
+
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          # - alertmanager:9093
