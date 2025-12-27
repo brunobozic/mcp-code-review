@@ -1,0 +1,294 @@
+services:
+  # Production-Grade GitLab CE with Full Features
+  gitlab:
+    image: gitlab/gitlab-ce:16.7.2-ce.0
+    container_name: mcp-gitlab-production
+    restart: unless-stopped
+    hostname: 'gitlab.mcp-review.local'
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://localhost:9191'
+        
+        # Network and Security Configuration
+        nginx['enable'] = true
+        nginx['listen_port'] = 80
+        nginx['listen_https'] = false
+        nginx['redirect_http_to_https'] = false
+        nginx['client_max_body_size'] = '250m'
+        nginx['gzip_enabled'] = true
+        nginx['proxy_set_headers'] = {
+          "Host" => "$http_host_with_default",
+          "X-Real-IP" => "$remote_addr",
+          "X-Forwarded-For" => "$proxy_add_x_forwarded_for",
+          "X-Forwarded-Proto" => "$scheme"
+        }
+        
+        # PostgreSQL Configuration (External)
+        postgresql['enable'] = false
+        gitlab_rails['db_adapter'] = 'postgresql'
+        gitlab_rails['db_encoding'] = 'unicode'
+        gitlab_rails['db_collation'] = nil
+        gitlab_rails['db_host'] = 'mcp-gitlab-postgres'
+        gitlab_rails['db_port'] = 5432
+        gitlab_rails['db_database'] = 'gitlabhq_production'
+        gitlab_rails['db_username'] = 'gitlab'
+        gitlab_rails['db_password'] = 'gitlab_secure_password_2025'
+        gitlab_rails['db_pool'] = 50
+        gitlab_rails['db_connect_timeout'] = 60
+        
+        # Redis Configuration (External)
+        redis['enable'] = false
+        gitlab_rails['redis_host'] = 'mcp-gitlab-redis'
+        gitlab_rails['redis_port'] = 6379
+        gitlab_rails['redis_database'] = 0
+        gitlab_rails['redis_password'] = 'redis_secure_password_2025'
+        
+        # GitLab Application Configuration
+        gitlab_rails['time_zone'] = 'UTC'
+        gitlab_rails['backup_keep_time'] = 604800
+        gitlab_rails['gitlab_email_from'] = 'gitlab@mcp-review.local'
+        gitlab_rails['gitlab_email_display_name'] = 'GitLab MCP Code Review'
+        gitlab_rails['gitlab_email_reply_to'] = 'noreply@mcp-review.local'
+        gitlab_rails['gitlab_default_projects_limit'] = 100
+        gitlab_rails['gitlab_default_can_create_group'] = true
+        gitlab_rails['gitlab_username_changing_enabled'] = false
+        gitlab_rails['gitlab_default_theme'] = 2
+        gitlab_rails['gravatar_enabled'] = true
+        
+        # Performance and Scaling
+        puma['enable'] = true
+        puma['worker_timeout'] = 60
+        puma['worker_processes'] = 4
+        puma['min_threads'] = 4
+        puma['max_threads'] = 16
+        puma['worker_max_memory'] = 1024
+        
+        sidekiq['enable'] = true
+        sidekiq['log_level'] = 'info'
+        sidekiq['max_concurrency'] = 50
+        sidekiq['min_concurrency'] = 25
+        
+        # Git Configuration
+        gitlab_shell['enable'] = true
+        gitlab_shell['auth_file'] = "/var/opt/gitlab/.ssh/authorized_keys"
+        gitlab_shell['ssh_port'] = 2222
+        gitlab_shell['git_timeout'] = 800
+        
+        # Gitaly Configuration
+        gitaly['enable'] = true
+        gitaly['configuration'] = {
+          storage: [
+            {
+              name: 'default',
+              path: '/var/opt/gitlab/git-data/repositories'
+            }
+          ],
+          logging: {
+            level: 'info',
+            format: 'json'
+          },
+          prometheus: {
+            grpc_latency_buckets: '[0.001, 0.005, 0.025, 0.1, 0.5, 1.0, 10.0, 30.0, 60.0, 300.0, 1500.0]'
+          }
+        }
+        
+        # GitLab Workhorse
+        gitlab_workhorse['enable'] = true
+        gitlab_workhorse['ha'] = false
+        gitlab_workhorse['listen_network'] = "unix"
+        gitlab_workhorse['listen_addr'] = "/var/opt/gitlab/gitlab-workhorse/socket"
+        gitlab_workhorse['auth_backend'] = "http://localhost:8080"
+        gitlab_workhorse['auth_socket'] = "/var/opt/gitlab/gitlab-rails/sockets/gitlab.socket"
+        
+        # Security Configuration
+        gitlab_rails['initial_root_password'] = 'Adm1nP@ssw0rd2025!'
+        gitlab_rails['store_initial_root_password'] = true
+        gitlab_rails['display_initial_root_password'] = true
+        gitlab_rails['secret_key_base'] = 'production_secret_key_base_2025_secure_random_string_for_mcp_gitlab'
+        gitlab_rails['otp_key_base'] = 'production_otp_key_base_2025_secure_random_string_for_mcp_gitlab'
+        gitlab_rails['db_key_base'] = 'production_db_key_base_2025_secure_random_string_for_mcp_gitlab'
+        gitlab_rails['openid_connect_signing_key'] = nil
+        gitlab_rails['encrypted_settings_key_base'] = 'encrypted_settings_2025_secure_random_string_for_mcp_gitlab'
+        
+        # SMTP Configuration (for notifications)
+        gitlab_rails['smtp_enable'] = false
+        gitlab_rails['smtp_address'] = "localhost"
+        gitlab_rails['smtp_port'] = 587
+        
+        # Container Registry (Disabled for this setup)
+        registry['enable'] = false
+        
+        # GitLab Pages (Disabled for this setup)
+        gitlab_pages['enable'] = false
+        
+        # Monitoring and Logging
+        logging['udp_log_shipping_host'] = nil
+        logging['udp_log_shipping_port'] = 514
+        logging['logrotate_frequency'] = "daily"
+        logging['logrotate_maxsize'] = nil
+        logging['logrotate_size'] = nil
+        logging['logrotate_rotate'] = 30
+        logging['logrotate_compress'] = "compress"
+        logging['logrotate_method'] = "copytruncate"
+        logging['logrotate_postrotate'] = nil
+        logging['logrotate_dateformat'] = nil
+        
+        # Prometheus Metrics (Internal)
+        prometheus['enable'] = true
+        prometheus['listen_address'] = 'localhost:9090'
+        prometheus['scrape_interval'] = 15
+        prometheus['scrape_timeout'] = 15
+        
+        # Node Exporter for System Metrics
+        node_exporter['enable'] = true
+        node_exporter['listen_address'] = 'localhost:9100'
+        
+        # Redis Exporter
+        redis_exporter['enable'] = true
+        redis_exporter['listen_address'] = 'localhost:9121'
+        
+        # PostgreSQL Exporter
+        postgres_exporter['enable'] = true
+        postgres_exporter['listen_address'] = 'localhost:9187'
+        
+        # Grafana (Internal)
+        grafana['enable'] = true
+        grafana['admin_password'] = 'GitLabGrafanaAdmin2025!'
+        
+        # Let's Encrypt (Disabled for local development)
+        letsencrypt['enable'] = false
+        
+        # Mattermost (Disabled for this setup)
+        mattermost['enable'] = false
+        
+        # GitLab KAS (Kubernetes Agent)
+        gitlab_kas['enable'] = true
+        gitlab_kas['listen_address'] = '0.0.0.0:8150'
+        gitlab_kas['listen_websocket'] = true
+        
+        # Backup Configuration
+        gitlab_rails['manage_backup_path'] = true
+        gitlab_rails['backup_path'] = "/var/opt/gitlab/backups"
+        gitlab_rails['backup_archive_permissions'] = 0644
+        gitlab_rails['backup_pg_schema'] = 'public'
+        gitlab_rails['backup_gitaly_backup_path'] = "/opt/gitlab/embedded/bin/gitaly-backup"
+        
+        # Cron Jobs
+        gitlab_rails['cron_jobs'] = {
+          'admin_email_worker' => {
+            'cron' => '0 0 * * 0',
+            'job_class' => 'AdminEmailWorker'
+          },
+          'personal_access_tokens_expiring_worker' => {
+            'cron' => '0 1 * * *',
+            'job_class' => 'PersonalAccessTokens::ExpiringWorker'
+          },
+          'repository_check_worker' => {
+            'cron' => '20 * * * *',
+            'job_class' => 'RepositoryCheck::BatchWorker'
+          }
+        }
+        
+    ports:
+      - '9191:80'          # HTTP Web Interface
+      - '2222:22'          # SSH Git Access
+      - '5050:5050'        # GitLab Registry (if enabled)
+      - '8150:8150'        # GitLab KAS
+    volumes:
+      - '../data/gitlab/config:/etc/gitlab:Z'
+      - '../data/gitlab/logs:/var/log/gitlab:Z'
+      - '../data/gitlab/data:/var/opt/gitlab:Z'
+      - '../data/gitlab/backups:/var/opt/gitlab/backups:Z'
+    shm_size: '512m'
+    ulimits:
+      sigpending: 62793
+      nproc: 131072
+      nofile: 1048576
+      core: 0
+    depends_on:
+      gitlab-postgres:
+        condition: service_healthy
+      gitlab-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost/-/health || exit 1"]
+      interval: 60s
+      timeout: 30s
+      retries: 10
+      start_period: 600s
+    sysctls:
+      net.core.somaxconn: 1024
+    security_opt:
+      - seccomp:unconfined
+
+  # Production PostgreSQL with Optimizations
+  gitlab-postgres:
+    image: postgres:15.5-alpine
+    container_name: mcp-gitlab-postgres-prod
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: gitlabhq_production
+      POSTGRES_USER: gitlab
+      POSTGRES_PASSWORD: gitlab_secure_password_2025
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=en_US.UTF-8 --lc-ctype=en_US.UTF-8"
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - '../data/gitlab/postgresql:/var/lib/postgresql/data:Z'
+      - '../data/gitlab/postgresql-backups:/backups:Z'
+      - './config/postgresql/postgresql.conf:/etc/postgresql/postgresql.conf:ro'
+      - './config/postgresql/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro'
+    command: |
+      postgres
+        -c config_file=/etc/postgresql/postgresql.conf
+        -c hba_file=/etc/postgresql/pg_hba.conf
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gitlab -d gitlabhq_production"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+
+  # Production Redis with Persistence
+  gitlab-redis:
+    image: redis:7.2.3-alpine
+    container_name: mcp-gitlab-redis-prod
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: redis_secure_password_2025
+    volumes:
+      - '../data/gitlab/redis:/data:Z'
+      - './config/redis/redis.conf:/etc/redis/redis.conf:ro'
+    command: redis-server /etc/redis/redis.conf --requirepass redis_secure_password_2025
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --pass redis_secure_password_2025 ping || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
+
+networks:
+  default:
+    name: mcp-gitlab-network
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  gitlab-postgres-data:
+    driver: local
+  gitlab-redis-data:
+    driver: local
+  gitlab-data:
+    driver: local
